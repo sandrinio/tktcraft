@@ -14,7 +14,7 @@
   },
   "type": "module",
   "bin": {
-    "tkt": "./bin/tkt.js"
+    "tkt": "bin/tkt.js"
   },
   "files": [
     "bin/",
