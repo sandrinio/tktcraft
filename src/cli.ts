@@ -221,6 +221,19 @@ async function main(): Promise<void> {
       ? (flags.provider.toLowerCase() as ProviderType)
       : undefined;
 
+  if (command === 'onboarding' || command === 'guide') {
+    const onboardingPath = join(PACKAGE_ROOT, 'ONBOARDING.md');
+    const setupPath = join(PACKAGE_ROOT, 'SETUP.md');
+    if (existsSync(onboardingPath)) {
+      console.log(readFileSync(onboardingPath, 'utf-8'));
+    } else if (existsSync(setupPath)) {
+      console.log(readFileSync(setupPath, 'utf-8'));
+    } else {
+      printHelp();
+    }
+    return;
+  }
+
   if (command === 'setup' || command === 'init') {
     const labelsRaw = typeof flags.labels === 'string' ? flags.labels : undefined;
     await runSetupWizard({

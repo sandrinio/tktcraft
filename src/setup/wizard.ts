@@ -1,4 +1,7 @@
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { fileURLToPath } from 'node:url';
 import {
   generateBoardContextMarkdown,
   generateMultiBoardIndexMarkdown,
@@ -17,6 +20,10 @@ import type {
   TktProfile,
 } from '../types.ts';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const PACKAGE_ROOT = resolve(__dirname, '..', '..');
+
 export interface SetupWizardOptions {
   provider?: ProviderType;
   profileName?: string;
@@ -33,7 +40,13 @@ export interface SetupWizardOptions {
   workspaceDir?: string;
 }
 
-function slugifyBoardAlias(project: string, board: BoardSummary, index: number, total: number, explicitProfile?: string): string {
+function slugifyBoardAlias(
+  project: string,
+  board: BoardSummary,
+  index: number,
+  total: number,
+  explicitProfile?: string
+): string {
   if (explicitProfile && total === 1) {
     return explicitProfile;
   }
@@ -48,15 +61,49 @@ function slugifyBoardAlias(project: string, board: BoardSummary, index: number, 
   return cleanName || `${project.toLowerCase()}-board-${board.id || index + 1}`;
 }
 
+/**
+ * Ensures `.env` is listed in `.gitignore` and scaffolds `.agents/` (skill + hooks)
+ * into a fresh workspace if not already present.
+ */
+export function scaffoldWorkspaceAgentHarness(workspaceDir: string = process.cwd()): void {
+  // 1. Ensure .gitignore protects .env
+  const gitignorePath = join(workspaceDir, '.gitignore');
+  if (existsSync(gitignorePath)) {
+    const content = readFileSync(gitignorePath, 'utf-8');
+    if (!content.split(/\r?\n/).some((line) => line.trim() === '.env')) {
+      writeFileSync(
+        gitignorePath,
+        content.replace(/\s*$/, '\n.env\n'),
+        'utf-8'
+      );
+    }
+  } else {
+    writeFileSync(gitignorePath, '.env\nnode_modules/\n', 'utf-8');
+  }
+
+  // 2. Copy .agents/skills/tkt-ops and .agents/hooks.json if running in an external workspace
+  const targetAgentsDir = join(workspaceDir, '.agents');
+  const sourceAgentsDir = join(PACKAGE_ROOT, '.agents');
+  if (
+    resolve(workspaceDir) !== resolve(PACKAGE_ROOT) &&
+    existsSync(sourceAgentsDir) &&
+    !existsSync(join(targetAgentsDir, 'skills', 'tkt-ops', 'SKILL.md'))
+  ) {
+    mkdirSync(targetAgentsDir, { recursive: true });
+    cpSync(sourceAgentsDir, targetAgentsDir, { recursive: true, force: false });
+  }
+}
+
 function createTempProvider(
   providerType: ProviderType,
   baseUrl: string,
   user: string | undefined,
   token: string,
   authType: 'cloud' | 'datacenter' | 'pat' | 'bearer',
-  project: string = 'TEMP'
+  project: string = 'TEMP',
+  workspaceDir: string = process.cwd()
 ): TrackerProvider {
-  const creds = resolveCredentials(providerType, process.cwd(), {
+  const creds = resolveCredentials(providerType, workspaceDir, {
     baseUrl,
     user,
     token,
@@ -119,13 +166,26 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
     // Step 1: Choose Provider (jira | ado) — enforce single account if workspace already initialized
     let provider: ProviderType | undefined = options.provider ?? existingCfg?.provider;
     if (!provider) {
-      const choice = (
-        await ask('1. Select issue tracker provider (1 = Jira, 2 = Azure DevOps)', '1')
-      ).toLowerCase();
-      provider =
-        choice === '2' || choice === 'ado' || choice.includes('azure')
-          ? 'ado'
-          : 'jira';
+      if (options.baseUrl?.includes('atlassian.net') || env.JIRA_URL || env.JIRA_TOKEN) {
+        provider = 'jira';
+      } else if (options.baseUrl?.includes('dev.azure.com') || env.ADO_ORG_URL || env.ADO_TOKEN) {
+        provider = 'ado';
+      } else if (isInteractive) {
+        const choice = (
+          await ask('1. Select issue tracker provider (1 = Jira, 2 = Azure DevOps)', '1')
+        ).toLowerCase();
+        provider =
+          choice === '2' || choice === 'ado' || choice.includes('azure')
+            ? 'ado'
+            : 'jira';
+      } else {
+        throw new Error(
+          `[ONBOARDING: MISSING CONNECTION DETAILS]\n` +
+            `Please ask the user which issue tracker account to connect to:\n` +
+            `  • Jira (Cloud or Data Center): requires --provider jira, --url <JIRA_URL>, --user <EMAIL> (for Cloud), --token <JIRA_TOKEN>\n` +
+            `  • Azure DevOps Boards:         requires --provider ado,  --url <ADO_ORG_URL>, --token <ADO_TOKEN>`
+        );
+      }
     }
 
     // Step 2: Credentials & Base URL (Single-account shared across all connected boards)
@@ -153,7 +213,7 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
       if (authType === 'cloud') {
         user =
           user ||
-          (await ask('4. Atlassian User Email', existingUser));
+          (await ask('4. Atlassian User Email (required for Jira Cloud)', existingUser));
       }
       token =
         token ||
@@ -162,15 +222,36 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
           existingToken
         ));
 
-      upsertDotEnvValues(
-        {
-          JIRA_URL: baseUrl,
-          ...(user ? { JIRA_USER: user } : {}),
-          JIRA_TOKEN: token,
-          JIRA_AUTH_TYPE: authType,
-        },
-        workspaceDir
-      );
+      // Save whatever partial or complete credentials were provided to .env immediately
+      const envToSave: Record<string, string> = { JIRA_AUTH_TYPE: authType };
+      if (baseUrl) envToSave.JIRA_URL = baseUrl;
+      if (user) envToSave.JIRA_USER = user;
+      if (token) envToSave.JIRA_TOKEN = token;
+      upsertDotEnvValues(envToSave, workspaceDir);
+
+      // Check for missing connection details and emit structured onboarding prompt if anything is missing
+      const missing: string[] = [];
+      const provided: string[] = [];
+      if (baseUrl) provided.push(`JIRA_URL (${baseUrl})`);
+      else missing.push('JIRA_URL (--url https://your-domain.atlassian.net)');
+
+      if (authType === 'cloud') {
+        if (user) provided.push(`JIRA_USER (${user})`);
+        else missing.push('JIRA_USER (--user your-email@domain.com — Atlassian account email is required alongside the API token for Jira Cloud)');
+      }
+
+      if (token) provided.push('JIRA_TOKEN (***configured***)');
+      else missing.push('JIRA_TOKEN (--token <ATATT3x...>)');
+
+      if (missing.length > 0) {
+        throw new Error(
+          `[ONBOARDING: MISSING CONNECTION DETAILS FOR JIRA]\n` +
+            `Provided so far: ${provided.length > 0 ? provided.join(', ') : 'none'}\n` +
+            `Missing required connection details:\n` +
+            missing.map((m) => `  ✗ ${m}`).join('\n') +
+            `\n\nAI Agent Action: Ask the user for the missing field(s) above, then re-run 'tkt setup'.`
+        );
+      }
     } else {
       const existingUrl = baseUrl || env.ADO_ORG_URL || '';
       const existingUser = env.ADO_USER || '';
@@ -193,18 +274,33 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
           existingToken
         ));
 
-      upsertDotEnvValues(
-        {
-          ADO_ORG_URL: baseUrl,
-          ...(user ? { ADO_USER: user } : {}),
-          ADO_TOKEN: token,
-        },
-        workspaceDir
-      );
+      const envToSave: Record<string, string> = {};
+      if (baseUrl) envToSave.ADO_ORG_URL = baseUrl;
+      if (user) envToSave.ADO_USER = user;
+      if (token) envToSave.ADO_TOKEN = token;
+      upsertDotEnvValues(envToSave, workspaceDir);
+
+      const missing: string[] = [];
+      const provided: string[] = [];
+      if (baseUrl) provided.push(`ADO_ORG_URL (${baseUrl})`);
+      else missing.push('ADO_ORG_URL (--url https://dev.azure.com/your-org)');
+
+      if (token) provided.push('ADO_TOKEN (***configured***)');
+      else missing.push('ADO_TOKEN (--token <PERSONAL_ACCESS_TOKEN>)');
+
+      if (missing.length > 0) {
+        throw new Error(
+          `[ONBOARDING: MISSING CONNECTION DETAILS FOR AZURE DEVOPS]\n` +
+            `Provided so far: ${provided.length > 0 ? provided.join(', ') : 'none'}\n` +
+            `Missing required connection details:\n` +
+            missing.map((m) => `  ✗ ${m}`).join('\n') +
+            `\n\nAI Agent Action: Ask the user for the missing field(s) above, then re-run 'tkt setup'.`
+        );
+      }
     }
 
     // Step 3: Verify Connection
-    const client = createTempProvider(provider, baseUrl, user, token, authType);
+    const client = createTempProvider(provider, baseUrl, user, token, authType, 'TEMP', workspaceDir);
     if (options.format !== 'json') {
       console.log(`\n⏳ Verifying ${provider.toUpperCase()} connection to ${baseUrl}...`);
     }
@@ -220,21 +316,38 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
       if (projects.length === 0) {
         throw new Error(`No accessible projects found in ${baseUrl}.`);
       }
-      if (options.format !== 'json') {
-        console.log(`\n📁 Found ${projects.length} accessible project(s):`);
-        projects.slice(0, 25).forEach((p, idx) => {
-          console.log(`  [${idx + 1}] ${p.key.padEnd(16)} — ${p.name}`);
-        });
-      }
-      const projChoice = await ask(
-        '\n6. Select Project (enter number or Project Key/Name)',
-        projects[0].key
-      );
-      const numIdx = Number(projChoice);
-      if (!Number.isNaN(numIdx) && numIdx >= 1 && numIdx <= projects.length) {
-        selectedProject = projects[numIdx - 1].key;
+      if (!isInteractive && projects.length === 1) {
+        // Auto-select if there is only 1 accessible project in the account
+        selectedProject = projects[0].key;
+        if (options.format !== 'json') {
+          console.log(`✓ Auto-selected the only project in account: ${projects[0].key} (${projects[0].name})`);
+        }
+      } else if (!isInteractive && projects.length > 1) {
+        const projListStr = projects
+          .map((p) => `  • --project "${p.key}"  (${p.name})`)
+          .join('\n');
+        throw new Error(
+          `[ONBOARDING: PROJECT SELECTION REQUIRED]\n` +
+            `Found ${projects.length} accessible projects in ${baseUrl}:\n${projListStr}\n\n` +
+            `AI Agent Action: Ask the user which project to connect to, then re-run with --project "<PROJECT_KEY>".`
+        );
       } else {
-        selectedProject = projChoice;
+        if (options.format !== 'json') {
+          console.log(`\n📁 Found ${projects.length} accessible project(s):`);
+          projects.slice(0, 25).forEach((p, idx) => {
+            console.log(`  [${idx + 1}] ${p.key.padEnd(16)} — ${p.name}`);
+          });
+        }
+        const projChoice = await ask(
+          '\n6. Select Project (enter number or Project Key/Name)',
+          projects[0].key
+        );
+        const numIdx = Number(projChoice);
+        if (!Number.isNaN(numIdx) && numIdx >= 1 && numIdx <= projects.length) {
+          selectedProject = projects[numIdx - 1].key;
+        } else {
+          selectedProject = projChoice;
+        }
       }
     }
 
@@ -246,7 +359,6 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
       const target = spec.trim().toLowerCase();
       const numIdx = Number(target);
       if (!Number.isNaN(numIdx) && numIdx >= 1 && numIdx <= boards.length) {
-        // Only treat as 1-based index if no board has that exact ID
         const exactById = boards.find((b) => b.id.toLowerCase() === target);
         if (!exactById) {
           return boards[numIdx - 1];
@@ -304,7 +416,10 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
         .map((b) => `  • --board "${b.id}"  (${b.name} [${b.type}])`)
         .join('\n');
       throw new Error(
-        `Board selection is required during setup! Found ${boards.length} board(s) in project '${selectedProject}':\n${boardListStr}\n\nRe-run with one or multiple comma-separated boards:\n  tkt setup --provider ${provider} --project "${selectedProject}" --board "<BOARD_ID_1>,<BOARD_ID_2>"`
+        `[ONBOARDING: BOARD SELECTION REQUIRED]\n` +
+          `Found ${boards.length} board(s) in project '${selectedProject}':\n${boardListStr}\n\n` +
+          `AI Agent Action: Present these boards to the user and ask which board(s) to connect to, then re-run:\n` +
+          `  tkt setup --provider ${provider} --project "${selectedProject}" --board "<BOARD_ID_1>,<BOARD_ID_2>" --non-interactive`
       );
     }
 
@@ -362,12 +477,14 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
         },
       };
 
-      // Set the first connected board in this run as default if no default exists yet
       upsertProfile(profile, i === 0 && !existingCfg?.defaultProfile, workspaceDir);
       const contextMdPath = generateBoardContextMarkdown(profile, workspaceDir);
       createdProfiles.push(profile);
       contextMdPaths.push(contextMdPath);
     }
+
+    // Scaffold .agents/ harness & .gitignore in fresh workspaces
+    scaffoldWorkspaceAgentHarness(workspaceDir);
 
     const updatedCfg = loadWorkspaceConfig(workspaceDir);
     const indexMdPath = updatedCfg
