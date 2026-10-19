@@ -1,6 +1,6 @@
-# Agent Workspace Directives (`tkt`)
+# Agent Workspace Directives (`tktcraft` / `tkt`)
 
-This repository contains **`tkt`** (`tkt-board-cli`), an open-source CLI and AI Agent harness for **Jira** (Cloud & Data Center) and **Azure DevOps Boards** featuring mandatory board-selection setup, board-suited structured outputs, and dual-layer **Pre-Hooks & Post-Hooks**.
+This repository contains **`tktcraft`** (CLI binaries: `tktcraft` and `tkt`), an open-source CLI and AI Agent harness for **Jira** (Cloud & Data Center) and **Azure DevOps Boards** featuring mandatory board-selection setup, board-suited structured outputs, and dual-layer **Pre-Hooks & Post-Hooks**.
 
 ---
 

@@ -1,6 +1,6 @@
-# `tkt` — Open-Source Board-Aware CLI for Jira & Azure DevOps (Human + AI Agent Ready)
+# `tktcraft` (`tkt`) — Open-Source Board-Aware CLI for Jira & Azure DevOps (Human + AI Agent Ready)
 
-`tkt` (`tkt-board-cli`) is a zero-dependency TypeScript/Node.js CLI tool and AI Agent harness that unifies **Atlassian Jira** (Cloud & Data Center) and **Microsoft Azure DevOps Boards** (`ADO`).
+`tktcraft` (command: `tktcraft` or `tkt`) is a zero-dependency TypeScript/Node.js CLI tool and AI Agent harness that unifies **Atlassian Jira** (Cloud & Data Center) and **Microsoft Azure DevOps Boards** (`ADO`).
 
 Unlike generic REST wrappers or raw MCP servers that treat issue trackers as flat databases, **`tkt` is Board-First**:
 1. **Mandatory Board Selection During Setup (`tkt setup`)**: Connects to your project, lists all available boards (Scrum, Kanban, Product Discovery, Portfolio/Epic, Bug Triage), and lets you choose which board(s) to connect to.

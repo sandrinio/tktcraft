@@ -1,6 +1,6 @@
-# `tkt` (`tkt-board-cli`) — System Architecture
+# `tktcraft` (`tkt`) — System Architecture
 
-This document describes the architecture, data models, board-introspection engine, multi-provider formatting pipeline, and dual-layer Pre-Hook / Post-Hook governance system of **`tkt`** (`tkt-board-cli`).
+This document describes the architecture, data models, board-introspection engine, multi-provider formatting pipeline, and dual-layer Pre-Hook / Post-Hook governance system of **`tktcraft`** (CLI binaries: `tktcraft` and `tkt`).
 
 ---
 

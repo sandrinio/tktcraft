@@ -1,19 +1,20 @@
 {
-  "name": "tkt-board-cli",
+  "name": "tktcraft",
   "version": "0.1.0",
-  "description": "Open-source AI & Human CLI for Jira and Azure DevOps with board-aware structured outputs, dynamic board setup, and pre/post-hooks.",
+  "description": "tktcraft — Open-source AI & Human CLI for crafting structured Jira and Azure DevOps tickets suited for every board, with dynamic board setup and pre/post-hooks.",
   "license": "MIT",
   "author": "Sandro Suladze",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sandrinio/tkt-board-cli.git"
+    "url": "git+https://github.com/sandrinio/tktcraft.git"
   },
-  "homepage": "https://github.com/sandrinio/tkt-board-cli#readme",
+  "homepage": "https://github.com/sandrinio/tktcraft#readme",
   "bugs": {
-    "url": "https://github.com/sandrinio/tkt-board-cli/issues"
+    "url": "https://github.com/sandrinio/tktcraft/issues"
   },
   "type": "module",
   "bin": {
+    "tktcraft": "bin/tkt.js",
     "tkt": "bin/tkt.js"
   },
   "files": [
@@ -35,6 +36,8 @@
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
+    "tktcraft",
+    "tkt",
     "jira",
     "azure-devops",
     "ado",
