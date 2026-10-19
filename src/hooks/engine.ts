@@ -245,9 +245,9 @@ export async function runCreatePreHooks(
 
   passedHooks.push('board-placement-injector');
 
-  // 3. Duplicate Detection Hook (Skip network call if offline dry-run without token)
+  // 3. Duplicate Detection Hook (Runs on both live create and --dry-run when credentials are available)
   let duplicatesFound: DuplicateCandidate[] = [];
-  if (!input.dryRun) {
+  if (typeof provider.findDuplicates === 'function') {
     try {
       duplicatesFound = await provider.findDuplicates(
         input.project || profile.project,

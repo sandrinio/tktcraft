@@ -306,9 +306,12 @@ export class JiraProvider implements TrackerProvider {
       // Tier 2: Sample recent tickets on this specific board to learn empirical conventions
       try {
         const boardIssues = await this.request<{ issues?: any[] }>(
-          `/rest/agile/1.0/board/${board.id}/issue?maxResults=25&fields=summary,issuetype,labels,description,parent,assignee`
+          `/rest/agile/1.0/board/${board.id}/issue?maxResults=50&fields=summary,issuetype,labels,description,parent,assignee,created`
         );
-        const rawList = boardIssues?.issues ?? [];
+        const rawList = (boardIssues?.issues ?? [])
+          .slice()
+          .sort((a: any, b: any) => Number(b.id || 0) - Number(a.id || 0))
+          .slice(0, 25);
         if (rawList.length > 0) {
           const mappedSample = rawList.map((iss: any) => {
             const f = iss.fields ?? {};

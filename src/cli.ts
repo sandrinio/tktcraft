@@ -63,7 +63,7 @@ function parseCliFlags(argv: string[]): {
 
       const key = arg.slice(2);
       if (
-        ['dry-run', 'yes', 'board-only', 'refresh', 'non-interactive', 'help'].includes(
+        ['dry-run', 'yes', 'board-only', 'refresh', 'non-interactive', 'help', 'init', 'customize'].includes(
           key
         )
       ) {
@@ -306,32 +306,61 @@ async function main(): Promise<void> {
   }
 
   if (command === 'template') {
-    const tplType = ((flags.type as string) || positionals[0] || 'story').toLowerCase();
     const map: Record<string, string> = {
       story: 'story_template.md',
+      'user story': 'story_template.md',
       requirements: 'story_template.md',
-      task: 'story_template.md',
+      task: 'task_template.md',
+      'sub-task': 'task_template.md',
+      subtask: 'task_template.md',
       bug: 'bug_template.md',
       defect: 'bug_template.md',
       epic: 'epic_template.md',
       initiative: 'initiative_template.md',
       feature: 'initiative_template.md',
     };
-    const filename = map[tplType] || 'story_template.md';
-    const tplPath = join(
-      PACKAGE_ROOT,
-      '.agents',
-      'skills',
-      'tkt-ops',
-      'assets',
-      filename
-    );
-    if (existsSync(tplPath)) {
-      console.log(readFileSync(tplPath, 'utf-8'));
-    } else {
-      throw new Error(`Template file not found at ${tplPath}`);
+
+    const pkgAssetsDir = join(PACKAGE_ROOT, '.agents', 'skills', 'tkt-ops', 'assets');
+    const customDir = join(process.cwd(), '.tkt', 'templates');
+
+    if (flags.init || flags.customize) {
+      const { mkdirSync, copyFileSync } = await import('node:fs');
+      mkdirSync(customDir, { recursive: true });
+      const files = [
+        'story_template.md',
+        'task_template.md',
+        'bug_template.md',
+        'epic_template.md',
+        'initiative_template.md',
+      ];
+      for (const f of files) {
+        const src = join(pkgAssetsDir, f);
+        const dest = join(customDir, f);
+        if (existsSync(src) && !existsSync(dest)) {
+          copyFileSync(src, dest);
+        }
+      }
+      console.log(`✓ Scaffolded customizable templates in .tkt/templates/ (${files.join(', ')})`);
+      return;
     }
-    return;
+
+    const tplType = ((flags.type as string) || positionals[0] || 'story').toLowerCase();
+    const filename = map[tplType] || 'story_template.md';
+    const candidatePaths = [
+      ...(boardHint ? [join(customDir, boardHint, filename)] : []),
+      ...(profileName ? [join(customDir, profileName, filename)] : []),
+      join(customDir, filename),
+      join(process.cwd(), '.agents', 'skills', 'tkt-ops', 'assets', filename),
+      join(pkgAssetsDir, filename),
+    ];
+
+    for (const candidate of candidatePaths) {
+      if (existsSync(candidate)) {
+        console.log(readFileSync(candidate, 'utf-8'));
+        return;
+      }
+    }
+    throw new Error(`Template file not found for type '${tplType}'.`);
   }
 
   // Extract smart multi-board routing hints from CLI flags

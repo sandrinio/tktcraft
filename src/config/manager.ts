@@ -849,10 +849,11 @@ export function analyzeEmpiricalBoardConventions(
       assignees.add(t.assignee);
     }
     if (t.description) {
-      const hMatches = t.description.matchAll(/^#{1,3}\s+(.+)$/gm);
+      const withoutCodeBlocks = t.description.replace(/```[\s\S]*?```/g, '');
+      const hMatches = withoutCodeBlocks.matchAll(/^#{1,3}\s+([A-Za-z][^\n#]{1,45})$/gm);
       for (const m of hMatches) {
         const h = m[1].trim();
-        if (h.length <= 50) {
+        if (h.length <= 45 && !h.endsWith('.')) {
           headingCounts.set(h, (headingCounts.get(h) ?? 0) + 1);
         }
       }
@@ -877,12 +878,19 @@ export function analyzeEmpiricalBoardConventions(
     .slice(0, 8)
     .map(([h]) => h);
 
+  const nonTrivialSummaries = tickets
+    .map((t) => t.summary.trim())
+    .filter((s) => s.length >= 12);
+
   return {
     sampledTicketCount: total,
     issueTypeCounts,
     activeLabelsVocabulary,
     detectedTitlePattern,
-    sampleSummaries: tickets.slice(0, 5).map((t) => t.summary),
+    sampleSummaries: (nonTrivialSummaries.length > 0
+      ? nonTrivialSummaries
+      : tickets.map((t) => t.summary)
+    ).slice(0, 5),
     commonDescriptionHeadings,
     parentLinkPercentage:
       total > 0 ? Math.round((parentLinkedCount / total) * 100) : undefined,
