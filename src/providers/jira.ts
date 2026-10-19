@@ -1,6 +1,8 @@
 import {
+  analyzeEmpiricalBoardConventions,
   buildBoardViewUrl,
   resolveBoardColumnForStatus,
+  resolveMatchingBoardProfileForTicket,
   resolveTargetStatusesFromColumnOrStatus,
   type ResolvedCredentials,
 } from '../config/manager.ts';
@@ -8,6 +10,7 @@ import { adfToMarkdown, markdownToAdf, type AdfNode } from '../formatters/markdo
 import type {
   BoardArchetype,
   BoardColumnMapping,
+  BoardEmpiricalConventions,
   BoardFieldDefinition,
   BoardIssueTypeSchema,
   ConnectedBoardConfig,
@@ -29,9 +32,6 @@ import type {
 
 /**
  * Extracts required labels from a Jira board's JQL filter query.
- * For example:
- *   `project = AIEAE AND labels = EAE-Implementation ORDER BY Rank` -> ["EAE-Implementation"]
- *   `project = "FOO" AND labels in ("team-a")` -> ["team-a"]
  */
 export function extractRequiredLabelsFromJql(jql: string): string[] {
   if (!jql) return [];
@@ -46,7 +46,6 @@ export function extractRequiredLabelsFromJql(jql: string): string[] {
     }
   }
 
-  // Single-value `labels in (...)`
   const inRegex = /\blabels\s+in\s*\(([^)]+)\)/gi;
   while ((match = inRegex.exec(jql)) !== null) {
     const rawItems = match[1]
@@ -59,6 +58,38 @@ export function extractRequiredLabelsFromJql(jql: string): string[] {
   }
 
   return Array.from(labels);
+}
+
+/**
+ * Extracts explicitly routed issue types from a Jira board's JQL filter query.
+ * e.g. `project = AIEAE AND issuetype in (Initiative, Epic) ORDER BY Rank ASC`
+ *   -> ["Initiative", "Epic"]
+ */
+export function extractRoutedIssueTypesFromJql(jql: string): string[] {
+  if (!jql) return [];
+  const types = new Set<string>();
+
+  const eqRegex = /\b(?:issuetype|type)\s*=\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))/gi;
+  let match: RegExpExecArray | null;
+  while ((match = eqRegex.exec(jql)) !== null) {
+    const val = match[1] || match[2] || match[3];
+    if (val) types.add(val);
+  }
+
+  const inRegex = /\b(?:issuetype|type)\s+in\s*\(([^)]+)\)/gi;
+  while ((match = inRegex.exec(jql)) !== null) {
+    const items = match[1]
+      .split(',')
+      .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+      .filter(Boolean);
+    for (const item of items) {
+      if (!item.endsWith('()')) {
+        types.add(item);
+      }
+    }
+  }
+
+  return Array.from(types);
 }
 
 export function inferBoardArchetype(
@@ -161,7 +192,6 @@ export class JiraProvider implements TrackerProvider {
         projectKey,
       }));
     } catch {
-      // Fallback if Agile API is restricted or project has a next-gen default board
       return [
         {
           id: 'default',
@@ -182,8 +212,11 @@ export class JiraProvider implements TrackerProvider {
     let filterId: string | undefined;
     let filterQuery: string | undefined;
     let requiredLabels: string[] = [];
+    let routedIssueTypes: string[] = [];
     let activeSprintId: number | undefined;
     let activeSprintName: string | undefined;
+    let activeSprintGoal: string | undefined;
+    let conventions: BoardEmpiricalConventions | undefined;
 
     if (board.id !== 'default' && board.id !== 'unconfigured') {
       try {
@@ -192,7 +225,6 @@ export class JiraProvider implements TrackerProvider {
         );
         filterId = cfg?.filter?.id ? String(cfg.filter.id) : undefined;
 
-        // Resolve status ID -> status name via /rest/api/3/status
         const statusMap = new Map<string, { name: string; category?: string }>();
         try {
           const allStatuses = await this.request<any[]>(
@@ -232,6 +264,8 @@ export class JiraProvider implements TrackerProvider {
             statuses,
             statusIds,
             category,
+            wipMin: typeof col.min === 'number' ? col.min : undefined,
+            wipMax: typeof col.max === 'number' ? col.max : undefined,
           });
         }
       } catch {
@@ -246,6 +280,7 @@ export class JiraProvider implements TrackerProvider {
           if (filterData?.jql) {
             filterQuery = String(filterData.jql);
             requiredLabels = extractRequiredLabelsFromJql(filterQuery);
+            routedIssueTypes = extractRoutedIssueTypesFromJql(filterQuery);
           }
         } catch {
           // ignore filter fetch error
@@ -261,10 +296,41 @@ export class JiraProvider implements TrackerProvider {
           if (active) {
             activeSprintId = Number(active.id);
             activeSprintName = String(active.name);
+            activeSprintGoal = active.goal ? String(active.goal) : undefined;
           }
         } catch {
           // ignore sprint lookup failure
         }
+      }
+
+      // Tier 2: Sample recent tickets on this specific board to learn empirical conventions
+      try {
+        const boardIssues = await this.request<{ issues?: any[] }>(
+          `/rest/agile/1.0/board/${board.id}/issue?maxResults=25&fields=summary,issuetype,labels,description,parent,assignee`
+        );
+        const rawList = boardIssues?.issues ?? [];
+        if (rawList.length > 0) {
+          const mappedSample = rawList.map((iss: any) => {
+            const f = iss.fields ?? {};
+            return {
+              issueType: String(f.issuetype?.name || 'Task'),
+              summary: String(f.summary || ''),
+              labels: Array.isArray(f.labels) ? f.labels.map(String) : [],
+              description:
+                typeof f.description === 'string'
+                  ? f.description
+                  : adfToMarkdown(f.description as AdfNode),
+              parentKey: f.parent?.key ? String(f.parent.key) : undefined,
+              assignee: f.assignee?.displayName || undefined,
+            };
+          });
+          conventions = analyzeEmpiricalBoardConventions(mappedSample);
+          if (routedIssueTypes.length === 0 && conventions) {
+            routedIssueTypes = Object.keys(conventions.issueTypeCounts);
+          }
+        }
+      } catch {
+        // Empirical ticket sampling is best-effort
       }
     }
 
@@ -276,7 +342,7 @@ export class JiraProvider implements TrackerProvider {
       );
     }
 
-    // Introspect project issue types & fields
+    // Tier 1: Introspect project issue types & fields
     const issueTypes: BoardIssueTypeSchema[] = [];
     try {
       const projData = await this.request<any>(
@@ -286,7 +352,6 @@ export class JiraProvider implements TrackerProvider {
         const fields: BoardFieldDefinition[] = [
           { key: 'summary', name: 'Summary', required: true, type: 'string' },
         ];
-        // Attempt to fetch createmeta for this issue type
         try {
           const meta = await this.request<any>(
             `/rest/api/${this.apiVersion}/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes/${it.id}`
@@ -341,6 +406,7 @@ export class JiraProvider implements TrackerProvider {
     return {
       id: board.id,
       name: board.name,
+      project: projectKey,
       boardType: board.type,
       archetype: inferBoardArchetype(board.name, board.type, filterQuery),
       boardUrl,
@@ -349,11 +415,14 @@ export class JiraProvider implements TrackerProvider {
       issueTypes,
       placement: {
         requiredLabels,
+        routedIssueTypes: routedIssueTypes.length > 0 ? routedIssueTypes : undefined,
         filterId,
         filterQuery,
         activeSprintId,
         activeSprintName,
+        activeSprintGoal,
       },
+      conventions,
       syncedAt: new Date().toISOString(),
     };
   }
@@ -362,7 +431,18 @@ export class JiraProvider implements TrackerProvider {
     const f = issue.fields ?? {};
     const key = String(issue.key);
     const status = String(f.status?.name ?? 'Unknown');
-    const boardColumn = resolveBoardColumnForStatus(this.profile.board, status);
+    const issueType = String(f.issuetype?.name || 'Task');
+    const labels = Array.isArray(f.labels) ? f.labels.map(String) : [];
+    const project = String(f.project?.key || this.profile.project);
+
+    // Match against all connected Jira boards in the workspace so cross-board tickets
+    // resolve to the right board's column and deep-link URL!
+    const matchedProfile = resolveMatchingBoardProfileForTicket(
+      { project, issueType, labels },
+      this.profile
+    );
+
+    const boardColumn = resolveBoardColumnForStatus(matchedProfile.board, status);
     const desc =
       typeof f.description === 'string'
         ? f.description
@@ -382,8 +462,8 @@ export class JiraProvider implements TrackerProvider {
     return {
       key,
       provider: 'jira',
-      project: String(f.project?.key || this.profile.project),
-      issueType: String(f.issuetype?.name || 'Task'),
+      project,
+      issueType,
       summary: String(f.summary || ''),
       status,
       boardColumn,
@@ -391,14 +471,15 @@ export class JiraProvider implements TrackerProvider {
       assignee: f.assignee?.displayName || f.assignee?.emailAddress || undefined,
       reporter: f.reporter?.displayName || f.reporter?.emailAddress || undefined,
       parentKey: f.parent?.key ? String(f.parent.key) : undefined,
-      labels: Array.isArray(f.labels) ? f.labels.map(String) : [],
+      labels,
       description: desc,
       created: f.created ? String(f.created) : undefined,
       updated: f.updated ? String(f.updated) : undefined,
       directUrl: `${this.creds.baseUrl}/browse/${key}`,
-      boardViewUrl: buildBoardViewUrl(this.profile, key),
-      boardName: this.profile.board.name,
-      boardId: this.profile.board.id,
+      boardViewUrl: buildBoardViewUrl(matchedProfile, key),
+      boardName: matchedProfile.board.name,
+      boardId: matchedProfile.board.id,
+      boardProfile: matchedProfile.name,
       comments,
     };
   }
@@ -420,6 +501,12 @@ export class JiraProvider implements TrackerProvider {
           .map((l) => `"${l}"`)
           .join(', ');
         clauses.push(`labels IN (${lbls})`);
+      }
+      if (input.boardOnly && this.profile.board.placement.routedIssueTypes?.length && !input.issueType) {
+        const rTypes = this.profile.board.placement.routedIssueTypes
+          .map((t) => `"${t}"`)
+          .join(', ');
+        clauses.push(`issuetype IN (${rTypes})`);
       }
       if (input.issueType) {
         clauses.push(`issuetype = "${input.issueType}"`);
@@ -476,10 +563,9 @@ export class JiraProvider implements TrackerProvider {
 
   async findDuplicates(
     projectKeyOrName: string,
-    issueType: string,
+    _issueType: string,
     summary: string
   ): Promise<DuplicateCandidate[]> {
-    // Extract distinctive keywords (length >= 4) from summary
     const stopWords = new Set([
       'implement',
       'create',
@@ -595,7 +681,6 @@ export class JiraProvider implements TrackerProvider {
       }
     }
 
-    // Apply custom field aliases if configured on the board
     if (input.customFields) {
       const aliases = this.profile.board.customFieldAliases ?? {};
       const valMaps = this.profile.board.customFieldValueMaps ?? {};
@@ -614,7 +699,6 @@ export class JiraProvider implements TrackerProvider {
     );
     const newKey = created.key;
 
-    // If a target board column or status was requested on create, transition immediately
     if (input.columnOrStatus) {
       try {
         await this.transitionTicketToColumnOrStatus(newKey, input.columnOrStatus);

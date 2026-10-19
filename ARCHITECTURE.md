@@ -146,9 +146,23 @@ Three pieces of team workflow knowledge live in the team's operating agreements 
 
 ---
 
-## 5. Mandatory Board Selection & Introspection Flow (`tktcraft setup`)
+## 5. Single-Account Multi-Board Architecture (`Jira + Jira` or `ADO + ADO`)
 
-During `tktcraft setup` (or `tktcraft discover`), the user or AI agent **must select which board to connect to**.
+### 5.1 Design Rule: One Account per Workspace, Multiple Connected Boards
+Real product and engineering teams frequently work across **multiple boards within the same Jira or Azure DevOps account** — for example:
+- **Jira + Jira (Same Account)**:
+  - **Board 1 (`eae-discovery` — Board `#4893`)**: Product Discovery & Intake Board (`Initiative` tickets, `labels = EAE-Discovery`, columns: *💡 Idea Captured $\rightarrow$ 💬 Product Discussion $\rightarrow$ 🔬 Tech Assessment $\rightarrow$ 🏁 Converted*).
+  - **Board 2 (`eae-delivery` — Board `#4887`)**: Engineering Implementation Board (`Story`, `Bug`, `Task`, `Epic` tickets, `labels = EAE-Implementation`, columns: *Backlog $\rightarrow$ In Progress $\rightarrow$ Code Review $\rightarrow$ Done*).
+- **Azure DevOps + Azure DevOps (Same Account)**:
+  - **Board 1 (`ado-portfolio-epics`)**: Portfolio Epics & Features Board (`AreaPath = CloudPlatform\Portfolio`, `Epic` & `Feature` work items).
+  - **Board 2 (`ado-team-alpha`)**: Team Alpha Sprint Delivery Board (`AreaPath = CloudPlatform\Team Alpha`, `User Story` & `Bug` work items).
+
+> [!IMPORTANT]
+> **Single-Account Multi-Board Isolation**:
+> `.tkt/config.json` binds a workspace to **one account/provider at a time** (`provider: "jira"` **OR** `provider: "ado"`, never mixed `jira + ado` in the same workspace) and allows connecting **1 to $N$ boards** within that account.
+
+### 5.2 Multi-Board Setup & Master Routing Index (`.tkt/boards/INDEX.md`)
+During `tktcraft setup`, the user or AI agent can select **one or multiple comma-separated boards** from the same account (`--board "4893,4887"` or `"1, 2"` interactively):
 
 ```mermaid
 sequenceDiagram
@@ -158,21 +172,33 @@ sequenceDiagram
     participant API as Jira Agile API / ADO Work API
     participant Disk as Local Workspace (.tkt/ & .env)
 
-    User->>Wizard: Run `tktcraft setup` (select Jira or Azure DevOps)
+    User->>Wizard: Run `tktcraft setup` (select Jira or Azure DevOps account)
     Wizard->>API: Authenticate (`GET /rest/api/3/myself` or `GET /_apis/connectionData`)
     API-->>Wizard: Authenticated User Identity
-    Wizard->>API: List accessible projects (`listProjects()`)
-    Wizard->>API: List all boards in selected project (`listBoards(project)`)
-    API-->>Wizard: List of Boards (Scrum, Kanban, Discovery, Team Boards)
-    Wizard->>User: Present Boards — User MUST select target Board
-    User-->>Wizard: Selects Board (e.g. Board #4887 or "Team Alpha — Stories")
-    Wizard->>API: Tier 1: Introspect Board Config, Columns, Filter/AreaPath, Fields & Sprints
-    Wizard->>API: Tier 2: Sample recent board tickets for labels, naming patterns & active types
-    API-->>Wizard: Complete ConnectedBoardConfig + Empirical Conventions
-    Wizard->>Disk: Save credentials to `.env` (gitignored)
-    Wizard->>Disk: Save board profile to `.tkt/config.json`
-    Wizard->>Disk: Generate AI & Human Board Guide `.tkt/boards/<profile>.md`
+    Wizard->>API: List accessible projects & boards (`listBoards(project)`)
+    API-->>Wizard: List of Boards in Account
+    Wizard->>User: Present Boards — User selects 1 or more Boards (e.g. "4893, 4887")
+    loop For each selected Board in the Account
+        Wizard->>API: Tier 1: Introspect Columns, JQL/WIQL Filter, Routed Types, AreaPath & Fields
+        Wizard->>API: Tier 2: Sample ~25 board tickets for empirical conventions
+        Wizard->>Disk: Generate per-board guide `.tkt/boards/<board-alias>.md`
+    end
+    Wizard->>Disk: Save all connected boards to `.tkt/config.json`
+    Wizard->>Disk: Generate Master Multi-Board Routing Map `.tkt/boards/INDEX.md`
 ```
+
+### 5.3 Deterministic Cross-Board Auto-Routing (`resolveActiveProfile`)
+When multiple boards are connected in the same Jira or Azure DevOps account, `tktcraft` automatically routes `create`, `get`, `update`, and `search` to the right board using a **5-step priority hierarchy**:
+1. **Explicit `--profile <alias>` or `--board <id|name>` flag**: Always wins when specified.
+2. **Issue / Work-Item Type Routing (`--type <TYPE>`)**:
+   - Matches against `board.placement.routedIssueTypes` (extracted automatically from the board's JQL `issuetype in (...)` filter or ADO backlog level) and Tier 2 empirical issue-type counts (`board.conventions.issueTypeCounts`).
+   - *Example*: `tktcraft create --type Initiative ...` automatically routes to **Discovery Board `#4893`**, whereas `tktcraft create --type Story ...` automatically routes to **Implementation Board `#4887`**!
+3. **Required Label / Tag Match (`--labels <LABEL>`)**:
+   - Matches against `board.placement.requiredLabels` (e.g. `EAE-Discovery` vs `EAE-Implementation`).
+4. **Azure DevOps `AreaPath` Match (`--area-path <PATH>`)**:
+   - Matches against `board.placement.defaultAreaPath` across multi-team ADO boards.
+5. **Ticket Inspection Cross-Board Resolution (`resolveMatchingBoardProfileForTicket`)**:
+   - When running `tktcraft get AIEAE-1900`, the provider fetches the ticket and matches its `issueType`, `labels`, and `areaPath` against all connected boards in `.tkt/config.json` so the output displays the **exact board column and deep-link URL** for the board where that ticket actually lives.
 
 ---
 

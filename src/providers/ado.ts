@@ -1,6 +1,8 @@
 import {
+  analyzeEmpiricalBoardConventions,
   buildBoardViewUrl,
   resolveBoardColumnForStatus,
+  resolveMatchingBoardProfileForTicket,
   resolveTargetStatusesFromColumnOrStatus,
   type ResolvedCredentials,
 } from '../config/manager.ts';
@@ -11,6 +13,7 @@ import {
 } from '../formatters/markdown-ado.ts';
 import type {
   BoardColumnMapping,
+  BoardEmpiricalConventions,
   BoardFieldDefinition,
   BoardIssueTypeSchema,
   ConnectedBoardConfig,
@@ -37,12 +40,6 @@ export interface JsonPatchOperation {
   value?: unknown;
 }
 
-/**
- * Builds WIQL tag filter expression for Azure DevOps.
- * As documented in Exadel Colleague's issue-trackers.md:
- * WIQL has no `IN` for `[System.Tags]` (which is a semicolon-joined string),
- * so each tag becomes its own `CONTAINS` joined by parenthesised `OR`s.
- */
 export function buildWiqlTagsClause(tags: string[]): string {
   const cleaned = tags.map((t) => t.trim()).filter(Boolean);
   if (cleaned.length === 0) return '';
@@ -136,7 +133,7 @@ export class AdoProvider implements TrackerProvider {
       );
       const teams = teamsRes.value ?? [];
 
-      for (const team of teams.slice(0, 10)) {
+      for (const team of teams.slice(0, 15)) {
         const teamEnc = encodeURIComponent(team.id || team.name);
         try {
           const bRes = await this.request<{ value?: any[] }>(
@@ -184,14 +181,19 @@ export class AdoProvider implements TrackerProvider {
     let defaultAreaPath = projectKeyOrName;
     let defaultIterationPath = projectKeyOrName;
     let activeSprintName: string | undefined;
+    const routedIssueTypesSet = new Set<string>();
+    let conventions: BoardEmpiricalConventions | undefined;
 
-    // 1. Introspect Board Columns <-> Underlying States
+    // 1. Introspect Board Columns <-> Underlying States, WIP Limits & Column Definition of Done!
     try {
       const boardDetail = await this.request<any>(
         `/${projEnc}/${teamEnc}/_apis/work/boards/${encodeURIComponent(board.id)}?api-version=7.1`
       );
       for (const col of boardDetail.columns ?? []) {
         const stateMappings = col.stateMappings ?? {};
+        for (const witKey of Object.keys(stateMappings)) {
+          routedIssueTypesSet.add(witKey);
+        }
         const statuses = Array.from(
           new Set<string>(Object.values(stateMappings).map(String))
         );
@@ -209,6 +211,8 @@ export class AdoProvider implements TrackerProvider {
           columnName: String(col.name),
           statuses,
           category,
+          wipMax: typeof col.itemLimit === 'number' && col.itemLimit > 0 ? col.itemLimit : undefined,
+          definitionOfDone: col.description ? String(col.description).trim() : undefined,
         });
       }
     } catch {
@@ -249,7 +253,7 @@ export class AdoProvider implements TrackerProvider {
       // keep project default
     }
 
-    // 3. Introspect Work Item Types & Dedicated Fields (AcceptanceCriteria, ReproSteps, etc.)
+    // 3. Introspect Work Item Types & Dedicated Fields
     const issueTypes: BoardIssueTypeSchema[] = [];
     try {
       const witRes = await this.request<{ value?: any[] }>(
@@ -292,6 +296,7 @@ export class AdoProvider implements TrackerProvider {
               name,
               required: true,
               type: 'string',
+              helpText: f.helpText ? String(f.helpText) : undefined,
             });
           }
         }
@@ -313,6 +318,19 @@ export class AdoProvider implements TrackerProvider {
       // fallback work item types
     }
 
+    // 4. Tier 2: Empirical Ticket Mining on this board's AreaPath
+    try {
+      const sampleTickets = await this.searchTickets({
+        query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = '${projectKeyOrName.replace(/'/g, "''")}' AND [System.AreaPath] UNDER '${defaultAreaPath.replace(/'/g, "''")}' ORDER BY [System.ChangedDate] DESC`,
+        maxResults: 25,
+      });
+      if (sampleTickets.length > 0) {
+        conventions = analyzeEmpiricalBoardConventions(sampleTickets);
+      }
+    } catch {
+      // best-effort empirical mining
+    }
+
     const teamSegment = board.teamName ? encodeURIComponent(board.teamName) : projEnc;
     const boardTypeSegment = encodeURIComponent(board.type || 'Stories');
     const boardUrl = `${this.creds.baseUrl}/${projEnc}/_boards/board/t/${teamSegment}/${boardTypeSegment}`;
@@ -321,6 +339,7 @@ export class AdoProvider implements TrackerProvider {
     return {
       id: board.id,
       name: board.name,
+      project: projectKeyOrName,
       boardType: board.type,
       archetype: inferBoardArchetype(board.name, board.type),
       boardUrl,
@@ -328,12 +347,17 @@ export class AdoProvider implements TrackerProvider {
       columns,
       issueTypes,
       placement: {
+        routedIssueTypes:
+          routedIssueTypesSet.size > 0
+            ? Array.from(routedIssueTypesSet)
+            : undefined,
         teamName: board.teamName,
         teamId: board.teamId,
         defaultAreaPath,
         defaultIterationPath,
         activeSprintName,
       },
+      conventions,
       syncedAt: new Date().toISOString(),
     };
   }
@@ -342,15 +366,26 @@ export class AdoProvider implements TrackerProvider {
     const f = wi.fields ?? {};
     const key = String(wi.id);
     const status = String(f['System.State'] || 'New');
-    const boardColumn =
-      String(f['System.BoardColumn'] || '') ||
-      resolveBoardColumnForStatus(this.profile.board, status);
+    const issueType = String(f['System.WorkItemType'] || 'User Story');
+    const areaPath = f['System.AreaPath'] ? String(f['System.AreaPath']) : undefined;
+    const project = String(f['System.TeamProject'] || this.profile.project);
 
     const rawTags = String(f['System.Tags'] || '');
     const labels = rawTags
       .split(';')
       .map((t) => t.trim())
       .filter(Boolean);
+
+    // Match against all connected ADO boards in the workspace so cross-board work items
+    // resolve to the right Team Board's column and deep-link URL!
+    const matchedProfile = resolveMatchingBoardProfileForTicket(
+      { project, issueType, labels, areaPath },
+      this.profile
+    );
+
+    const boardColumn =
+      String(f['System.BoardColumn'] || '') ||
+      resolveBoardColumnForStatus(matchedProfile.board, status);
 
     const assigneeObj = f['System.AssignedTo'];
     const assignee =
@@ -364,7 +399,6 @@ export class AdoProvider implements TrackerProvider {
         ? reporterObj
         : reporterObj?.displayName || reporterObj?.uniqueName || undefined;
 
-    // Resolve parent from relations if present
     let parentKey: string | undefined = f['System.Parent']
       ? String(f['System.Parent'])
       : undefined;
@@ -378,14 +412,13 @@ export class AdoProvider implements TrackerProvider {
       }
     }
 
-    const project = String(f['System.TeamProject'] || this.profile.project);
     const projEnc = encodeURIComponent(project);
 
     return {
       key,
       provider: 'ado',
       project,
-      issueType: String(f['System.WorkItemType'] || 'User Story'),
+      issueType,
       summary: String(f['System.Title'] || ''),
       status,
       boardColumn: boardColumn || undefined,
@@ -400,7 +433,7 @@ export class AdoProvider implements TrackerProvider {
       description: adoHtmlToText(f['System.Description']),
       acceptanceCriteria: adoHtmlToText(f['Microsoft.VSTS.Common.AcceptanceCriteria']) || undefined,
       reproSteps: adoHtmlToText(f['Microsoft.VSTS.TCM.ReproSteps']) || undefined,
-      areaPath: f['System.AreaPath'] ? String(f['System.AreaPath']) : undefined,
+      areaPath,
       iterationPath: f['System.IterationPath'] ? String(f['System.IterationPath']) : undefined,
       storyPoints:
         typeof f['Microsoft.VSTS.Scheduling.StoryPoints'] === 'number'
@@ -411,9 +444,10 @@ export class AdoProvider implements TrackerProvider {
       created: f['System.CreatedDate'] ? String(f['System.CreatedDate']) : undefined,
       updated: f['System.ChangedDate'] ? String(f['System.ChangedDate']) : undefined,
       directUrl: `${this.creds.baseUrl}/${projEnc}/_workitems/edit/${key}`,
-      boardViewUrl: buildBoardViewUrl(this.profile, key),
-      boardName: this.profile.board.name,
-      boardId: this.profile.board.id,
+      boardViewUrl: buildBoardViewUrl(matchedProfile, key),
+      boardName: matchedProfile.board.name,
+      boardId: matchedProfile.board.id,
+      boardProfile: matchedProfile.name,
       comments,
     };
   }
@@ -447,7 +481,6 @@ export class AdoProvider implements TrackerProvider {
     const projEnc = encodeURIComponent(this.profile.project);
     let wiql = input.query?.trim() || '';
 
-    // If user passed a non-SELECT query or empty query, build full WIQL
     if (!wiql || !/^select\s+/i.test(wiql)) {
       const clauses: string[] = [
         `[System.TeamProject] = '${this.profile.project.replace(/'/g, "''")}'`,
@@ -611,7 +644,6 @@ export class AdoProvider implements TrackerProvider {
       });
     }
 
-    // Apply board placement rules (AreaPath, IterationPath, Required Tags)
     const areaPath =
       input.areaPath ||
       (this.profile.governance.autoApplyBoardPlacement
@@ -717,7 +749,7 @@ export class AdoProvider implements TrackerProvider {
         value: {
           rel: 'System.LinkTypes.Hierarchy-Reverse',
           url: `${this.creds.baseUrl}/${projEnc}/_apis/wit/workItems/${parentId}`,
-          attributes: { comment: 'Linked parent via tkt CLI' },
+          attributes: { comment: 'Linked parent via tktcraft CLI' },
         },
       });
     }

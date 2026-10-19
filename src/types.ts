@@ -1,6 +1,6 @@
 /**
- * Core unified types for `tkt` — Multi-Provider (Jira & Azure DevOps)
- * Board-Aware CLI with Pre-Hooks and Post-Hooks.
+ * Core unified types for `tktcraft` (`tkt`) — Single-Account Multi-Board
+ * (Jira+Jira or ADO+ADO) CLI with 3-Tier Board Intelligence and Pre/Post-Hooks.
  */
 
 export type ProviderType = 'jira' | 'ado';
@@ -24,6 +24,11 @@ export interface BoardColumnMapping {
   statusIds?: string[];
   /** Category: todo | in_progress | done */
   category?: 'todo' | 'in_progress' | 'done';
+  /** Optional WIP limits discovered from board config */
+  wipMin?: number;
+  wipMax?: number;
+  /** Optional Column Definition of Done (extracted from Azure DevOps col.description) */
+  definitionOfDone?: string;
 }
 
 export interface BoardFieldDefinition {
@@ -31,6 +36,7 @@ export interface BoardFieldDefinition {
   name: string;
   required: boolean;
   type: string;
+  helpText?: string;
   allowedValues?: Array<{ id?: string; name: string; value?: string }>;
 }
 
@@ -57,6 +63,11 @@ export interface BoardPlacementRules {
    * the ticket passes the board's JQL/WIQL filter and appears on the board.
    */
   requiredLabels?: string[];
+  /**
+   * Issue types explicitly routed to this board (extracted from board JQL filter
+   * `issuetype in (...)` or empirical ticket mining).
+   */
+  routedIssueTypes?: string[];
   /** Jira JQL filter string discovered from the board */
   filterQuery?: string;
   /** Jira Filter ID */
@@ -72,13 +83,40 @@ export interface BoardPlacementRules {
   /** Active sprint ID (Jira) or iteration path (ADO) */
   activeSprintId?: string | number;
   activeSprintName?: string;
+  activeSprintGoal?: string;
+}
+
+/**
+ * Tier 2 Intelligence: Empirical team workflow conventions mined from recent
+ * tickets on this specific board during `tktcraft setup` / `tktcraft discover`.
+ */
+export interface BoardEmpiricalConventions {
+  sampledTicketCount: number;
+  /** Observed frequency of issue types on this board (e.g. { "Initiative": 18, "Epic": 2 }) */
+  issueTypeCounts: Record<string, number>;
+  /** Top existing labels/tags actually used on this board (anti-typo vocabulary) */
+  activeLabelsVocabulary: Array<{ label: string; count: number }>;
+  /** Detected title naming pattern (e.g. "[Prefix] Verb Outcome" vs "Sentence case") */
+  detectedTitlePattern?: string;
+  /** 3-5 real ticket summary examples from this board for few-shot grounding */
+  sampleSummaries: string[];
+  /** Recurring Markdown/HTML section headings found in ticket descriptions on this board */
+  commonDescriptionHeadings: string[];
+  /** Percentage (0-100) of sampled tickets that link to a parent Epic/Feature */
+  parentLinkPercentage?: number;
+  /** Active assignees observed on this board */
+  activeAssignees: string[];
 }
 
 export interface ConnectedBoardConfig {
+  /** Short workspace alias for this board (e.g. "discovery", "delivery", "infra") */
+  alias?: string;
   /** Board ID (numeric ID in Jira, GUID or name in Azure DevOps) */
   id: string;
   /** Display name of the selected board */
   name: string;
+  /** Project Key/Name this board belongs to (allows multi-board across same or sibling projects in the same account) */
+  project?: string;
   /** Native board type from provider (e.g. "scrum", "kanban", "simple", "Stories", "Epics") */
   boardType: string;
   /** Inferred or user-selected board archetype */
@@ -91,8 +129,10 @@ export interface ConnectedBoardConfig {
   columns: BoardColumnMapping[];
   /** Issue / Work Item types available on this board and their field schemas */
   issueTypes: BoardIssueTypeSchema[];
-  /** Automatic placement rules so created tickets always show up on this board */
+  /** Automatic placement & cross-board routing rules */
   placement: BoardPlacementRules;
+  /** Tier 2: Empirical team conventions mined from recent tickets on this board */
+  conventions?: BoardEmpiricalConventions;
   /** Custom field aliases configured for this board (e.g. { "theme": "customfield_13790" }) */
   customFieldAliases?: Record<string, string>;
   /** Custom value maps for custom fields (e.g. { "theme": { "input innovation": "25094" } }) */
@@ -126,14 +166,14 @@ export interface ProfileGovernanceConfig {
 }
 
 export interface TktProfile {
-  /** Profile identifier (e.g. "default", "jira-discovery", "ado-sprint") */
+  /** Board profile identifier / alias (e.g. "discovery", "implementation", "team-alpha") */
   name: string;
   provider: ProviderType;
-  /** Base URL (e.g. https://org.atlassian.net or https://dev.azure.com/org) */
+  /** Base URL of the shared account (e.g. https://org.atlassian.net or https://dev.azure.com/org) */
   baseUrl: string;
   /** Project Key (Jira, e.g. "AIEAE") or Project Name (Azure DevOps, e.g. "MyProject") */
   project: string;
-  /** Auth mode: basic (Jira Cloud), bearer (Jira DC), pat (ADO) */
+  /** Auth mode: cloud (Jira Cloud Basic), datacenter (Jira DC Bearer), pat (ADO) */
   authType?: 'cloud' | 'datacenter' | 'pat' | 'bearer';
   /** Env variable names holding credentials (keeps secrets out of .tkt/config.json) */
   envVars?: {
@@ -141,15 +181,25 @@ export interface TktProfile {
     user?: string;
     token?: string;
   };
-  /** The mandatory board connected during `tkt setup` */
+  /** The connected board for this profile entry */
   board: ConnectedBoardConfig;
   /** Pre-hook and post-hook governance settings */
   governance: ProfileGovernanceConfig;
 }
 
+/**
+ * Workspace configuration supporting a single Jira or Azure DevOps account
+ * connected to MULTIPLE boards (`Jira + Jira` or `ADO + ADO`).
+ */
 export interface TktWorkspaceConfig {
   version: 1;
+  /** Active account provider for this workspace ('jira' | 'ado') */
+  provider?: ProviderType;
+  /** Shared account base URL */
+  baseUrl?: string;
+  /** Default board alias/profile name */
   defaultProfile: string;
+  /** Map of connected board profiles (all sharing the workspace's Jira or ADO account) */
   profiles: Record<string, TktProfile>;
 }
 
@@ -167,7 +217,7 @@ export interface UnifiedTicket {
   issueType: string;
   summary: string;
   status: string;
-  /** Resolved board column name on the connected board */
+  /** Resolved board column name on the matched connected board */
   boardColumn?: string;
   priority?: string;
   assignee?: string;
@@ -185,16 +235,19 @@ export interface UnifiedTicket {
   updated?: string;
   /** Direct URL to the ticket/work-item */
   directUrl: string;
-  /** Deep-link URL to the ticket highlighted on the connected board */
+  /** Deep-link URL to the ticket highlighted on its matched connected board */
   boardViewUrl: string;
-  /** Connected board metadata */
+  /** Matched connected board metadata */
   boardName?: string;
   boardId?: string;
+  boardProfile?: string;
   comments?: TicketComment[];
 }
 
 export interface CreateTicketInput {
   project?: string;
+  /** Optional target board alias or ID (if omitted, auto-routed by issueType/labels/areaPath) */
+  board?: string;
   issueType: string;
   summary: string;
   description?: string;
@@ -216,6 +269,7 @@ export interface CreateTicketInput {
 
 export interface UpdateTicketInput {
   key: string;
+  board?: string;
   summary?: string;
   description?: string;
   acceptanceCriteria?: string;

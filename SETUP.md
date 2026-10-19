@@ -47,32 +47,32 @@ npm install && npm run build
    node ./bin/tkt.js boards --provider <jira|ado> --project "<PROJECT_KEY_OR_NAME>"
    ```
 3. Present the discovered boards to the user and ask:
-   > *"Which board in `<PROJECT>` would you like to connect to? (You can also connect multiple boards using named profiles like `discovery` and `delivery`.)"*
+   > *"Which board(s) in `<PROJECT>` would you like to connect to? You can select a single board or multiple boards on this account (e.g. both the Discovery Board and Implementation Board)."*
 
-### Step 4: Connect & Introspect the Selected Board
-Run `tkt setup` with the user's chosen board:
+### Step 4: Connect & Introspect the Selected Board(s)
+Run `tkt setup` with the user's chosen board (or comma-separated boards on the same account):
 ```bash
+# Connect a single board or multiple boards in the same Jira or ADO account at once:
 node ./bin/tkt.js setup \
   --provider <jira|ado> \
-  --profile <profile-name> \
   --project "<PROJECT_KEY_OR_NAME>" \
-  --board "<CHOSEN_BOARD_ID_OR_NAME>" \
+  --board "<BOARD_ID_1>,<BOARD_ID_2>" \
   --non-interactive
 ```
 What this does automatically:
-- Introspects the board's **Columns $\leftrightarrow$ Workflow Statuses / States**.
-- Extracts **Board Placement Rules** (required Jira filter labels from the board's JQL, or default Team `AreaPath` and `IterationPath` in Azure DevOps) so every created ticket is guaranteed to appear on the chosen board.
-- Introspects **Issue / Work-Item Types** and their required/custom fields (including dedicated Azure DevOps fields like `AcceptanceCriteria` and `ReproSteps`).
-- Saves the profile to `.tkt/config.json` and generates the AI board reference doc at `.tkt/boards/<profile-name>.md`.
+- Introspects **Tier 1 (Formal Schema)**: Each board's **Columns $\leftrightarrow$ Workflow Statuses / States**, WIP limits, Column Definitions of Done, JQL/WIQL filter placement rules (`requiredLabels`, `routedIssueTypes`, or Team `AreaPath`/`IterationPath`), and required/custom fields.
+- Introspects **Tier 2 (Empirical Team Conventions)**: Samples recent tickets on each board to learn active issue type distribution, real label/tag vocabulary, `[Prefix]` title patterns, and description headings.
+- Saves all connected boards to `.tkt/config.json`, generates per-board AI guides at `.tkt/boards/<board-alias>.md`, and builds the master multi-board routing map at `.tkt/boards/INDEX.md`.
 
 ### Step 5: Verify Connection & Board Schema
 ```bash
-node ./bin/tkt.js me --profile <profile-name>
-node ./bin/tkt.js board-schema --profile <profile-name>
+node ./bin/tkt.js me
+node ./bin/tkt.js profiles
+node ./bin/tkt.js board-schema
 ```
 Confirm to the user that:
 - ✅ Authentication is active (`tkt me`).
-- ✅ Board schema & column mappings are synced (`.tkt/boards/<profile-name>.md`).
+- ✅ Connected boards & auto-routing rules are synced (`.tkt/boards/INDEX.md` and `.tkt/boards/<board-alias>.md`).
 - ✅ AI Pre-Hooks and Post-Hooks are active (`.agents/hooks.json`).
 
 ---
@@ -83,7 +83,7 @@ Confirm to the user that:
 ```bash
 npm install
 npm run build
-# Optional: link `tkt` globally on your machine
+# Optional: link `tktcraft` and `tkt` globally on your machine
 npm link
 ```
 
@@ -93,18 +93,17 @@ Simply run:
 tkt setup
 ```
 The interactive wizard will guide you step-by-step:
-1. **Select Provider**: `[1] Jira` or `[2] Azure DevOps`
-2. **Enter Profile Name**: e.g. `jira-delivery`, `jira-discovery`, or `ado-sprint`
-3. **Enter URL & Token**: Saved securely to `.env` (never committed to git)
-4. **Select Project**: Pick from a numbered list of your accessible projects
-5. **Choose Your Board (Required)**: Pick from a numbered list of all boards in that project
-6. **Automatic Board Introspection**: `tkt` inspects the board's columns, statuses, JQL/WIQL filters, and work item fields, saving the board profile to `.tkt/config.json`.
+1. **Select Provider Account**: `[1] Jira` or `[2] Azure DevOps` (one provider account per workspace)
+2. **Enter URL & Token**: Saved securely to `.env` (never committed to git)
+3. **Select Project**: Pick from a numbered list of your accessible projects
+4. **Choose Your Board(s) (Required)**: Pick one or multiple comma-separated boards from the numbered list (e.g. `1` or `1,2`)
+5. **Automatic 3-Tier Board Introspection**: `tkt` inspects each board's columns, statuses, JQL/WIQL filters, work item fields, and recent ticket conventions, saving the connected boards to `.tkt/config.json` and `.tkt/boards/INDEX.md`.
 
-> **Tip — Connecting Multiple Boards at Once**:
-> Run `tkt setup` as many times as you like with different `--profile` names! For example:
-> - `tkt setup --profile discovery` (connected to your Product Discovery board)
-> - `tkt setup --profile delivery` (connected to your Engineering Sprint board)
-> - `tkt setup --profile ado-client` (connected to an Azure DevOps client board)
+> **Tip — Single-Account Multi-Board (`Jira + Jira` or `ADO + ADO`)**:
+> You can connect multiple boards from the same Jira account or the same Azure DevOps account!
+> - Pass multiple boards at once: `tkt setup --project AIEAE --board "4893,4887"`
+> - Or add another board from the same account later: `tkt setup --profile delivery --board "4887"`
+> - `tkt create`, `tkt get`, and `tkt update` automatically route across your connected boards by `--board`, `--type` (e.g. `Initiative` $\rightarrow$ Discovery Board vs. `Story` $\rightarrow$ Delivery Board), `--labels`, or `--area-path`!
 
 ### 3. Everyday Commands for Humans
 

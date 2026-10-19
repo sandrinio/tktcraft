@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   generateBoardContextMarkdown,
+  generateMultiBoardIndexMarkdown,
   loadWorkspaceConfig,
   resolveActiveProfile,
   resolveCredentials,
@@ -92,6 +93,7 @@ function parseCliFlags(argv: string[]): {
       const short = arg[1];
       const map: Record<string, string> = {
         p: 'project',
+        b: 'board',
         t: 'type',
         s: 'summary',
         d: 'description',
@@ -155,26 +157,26 @@ function parseCustomFieldFlags(rawFields: string | boolean | string[] | undefine
 
 function printHelp(): void {
   console.log(`
-tkt — Open-Source AI & Human CLI for Jira and Azure DevOps Boards
-=================================================================
+tktcraft (tkt) — Open-Source AI & Human CLI for Jira and Azure DevOps Boards
+============================================================================
 
 USAGE:
   tkt <command> [options]
 
-SETUP & BOARD CONNECTION COMMANDS:
-  tkt setup                     Interactive or flag-driven setup wizard (connects & introspects your chosen Board)
-  tkt me | test                 Test authentication and display active profile + connected board
-  tkt profiles                  List configured board profiles (--set-default <name>)
+SETUP & MULTI-BOARD CONNECTION COMMANDS (Single-Account Jira+Jira or ADO+ADO):
+  tkt setup                     Interactive or flag-driven setup wizard (connects 1 or more Boards in the same account)
+  tkt me | test                 Test authentication and display active profile + connected boards
+  tkt profiles                  List connected board profiles in the current account (--set-default <name>)
   tkt projects                  List accessible projects in Jira or Azure DevOps
-  tkt boards [-p <PROJECT>]     List all boards in a project so you can choose which board to connect to
-  tkt board-schema [--refresh]  Show the connected board's columns <-> statuses, required fields, and placement rules
+  tkt boards [-p <PROJECT>]     List all boards in a project (marks all [CONNECTED] boards in workspace)
+  tkt board-schema [--refresh]  Show the connected board's 3-Tier Intelligence (Columns, JQL/WIQL, Empirical Conventions)
   tkt discover                  Alias for 'board-schema --refresh' (live board introspection for AI agents)
 
 TICKET & BOARD WORKFLOW COMMANDS:
   tkt search [QUERY]            Search tickets (JQL for Jira, WIQL/keywords for Azure DevOps, or --board-only)
-  tkt get <KEY_OR_ID>           Inspect ticket details, board column, comments, and direct + board links
+  tkt get <KEY_OR_ID>           Inspect ticket details, auto-resolve its connected board, and show direct + board links
   tkt transitions <KEY_OR_ID>   List valid workflow transitions/states and their mapped Board Columns
-  tkt create [options]          Create a ticket on the connected board (with Pre-Hooks & Post-Hooks)
+  tkt create [options]          Create a ticket (auto-routes across connected boards by --board, --type, --labels, or --area-path)
   tkt update <KEY_OR_ID> [opts] Update fields, add comment, or move across Board Columns / Statuses
   tkt template [-t <TYPE>]      Print structured Markdown templates (story | bug | epic | initiative)
 
@@ -183,7 +185,8 @@ AI AGENT HARNESS HOOK COMMANDS:
   tkt hook post-tool            PostToolUse hook processor (enforces Direct + Board View URL output)
 
 GLOBAL OPTIONS:
-  --profile <NAME>              Use a specific board profile from .tkt/config.json
+  --profile <NAME>              Target a specific connected board profile from .tkt/config.json
+  --board, -b <ID_OR_NAME>      Target a specific connected board by Board ID, Board Name, or Profile Alias
   --provider <jira|ado>         Explicitly select provider ('jira' or 'ado')
   --format, -o <MODE>           Output format: human (default) | json | agent | md
   --dry-run                     Run pre-hooks and render preview without executing API mutations
@@ -212,6 +215,7 @@ async function main(): Promise<void> {
 
   const format = ((flags.format as string) || 'human').toLowerCase() as OutputFormat;
   const profileName = typeof flags.profile === 'string' ? flags.profile : undefined;
+  const boardHint = typeof flags.board === 'string' ? flags.board : undefined;
   const providerFlag =
     typeof flags.provider === 'string'
       ? (flags.provider.toLowerCase() as ProviderType)
@@ -227,7 +231,7 @@ async function main(): Promise<void> {
       token: typeof flags.token === 'string' ? flags.token : undefined,
       authType: typeof flags['auth-type'] === 'string' ? (flags['auth-type'] as any) : undefined,
       project: typeof flags.project === 'string' ? flags.project : undefined,
-      board: typeof flags.board === 'string' ? flags.board : undefined,
+      board: boardHint,
       requiredLabels: labelsRaw
         ? labelsRaw.split(',').map((s) => s.trim()).filter(Boolean)
         : undefined,
@@ -240,7 +244,7 @@ async function main(): Promise<void> {
   if (command === 'profiles') {
     const cfg = loadWorkspaceConfig();
     if (!cfg || Object.keys(cfg.profiles).length === 0) {
-      console.log("No profiles configured yet. Run 'tkt setup' to connect to a Jira or Azure DevOps board.");
+      console.log("No profiles configured yet. Run 'tkt setup' to connect to one or more boards on your Jira or Azure DevOps account.");
       return;
     }
     if (typeof flags['set-default'] === 'string') {
@@ -250,20 +254,41 @@ async function main(): Promise<void> {
       }
       cfg.defaultProfile = target;
       saveWorkspaceConfig(cfg);
-      console.log(`✓ Default profile set to '${target}'.`);
+      generateMultiBoardIndexMarkdown(cfg);
+      console.log(`✓ Default board profile set to '${target}'.`);
       return;
     }
     if (format === 'json' || format === 'agent') {
       console.log(JSON.stringify(cfg, null, 2));
       return;
     }
-    console.log(`Configured Board Profiles (.tkt/config.json):\n`);
+    const acctProvider = (cfg.provider ?? Object.values(cfg.profiles)[0]?.provider ?? 'jira').toUpperCase();
+    const acctUrl = cfg.baseUrl ?? Object.values(cfg.profiles)[0]?.baseUrl ?? '';
+    console.log(
+      `Connected Boards in ${acctProvider} Account (${acctUrl}):\n`
+    );
     for (const [name, p] of Object.entries(cfg.profiles)) {
       const def = cfg.defaultProfile === name ? ' * [DEFAULT]' : '';
+      const routingHints: string[] = [];
+      if (p.board.placement.routedIssueTypes?.length) {
+        routingHints.push(`Types: ${p.board.placement.routedIssueTypes.join(',')}`);
+      } else if (p.board.conventions?.issueTypeCounts && Object.keys(p.board.conventions.issueTypeCounts).length > 0) {
+        routingHints.push(
+          `Active Types: ${Object.keys(p.board.conventions.issueTypeCounts).join(',')}`
+        );
+      }
+      if (p.board.placement.requiredLabels?.length) {
+        routingHints.push(`Labels: ${p.board.placement.requiredLabels.join(',')}`);
+      }
+      if (p.board.placement.defaultAreaPath) {
+        routingHints.push(`AreaPath: ${p.board.placement.defaultAreaPath}`);
+      }
+      const routeSuffix = routingHints.length > 0 ? ` | Auto-Routes: [${routingHints.join(' | ')}]` : '';
       console.log(
-        `  • ${name.padEnd(18)} | ${p.provider.toUpperCase().padEnd(5)} | Project: ${p.project.padEnd(14)} | Board: ${p.board.name} (#${p.board.id})${def}`
+        `  • ${name.padEnd(20)} | Project: ${p.project.padEnd(10)} | Board: ${p.board.name} (#${p.board.id})${def}${routeSuffix}`
       );
     }
+    console.log(`\nMulti-Board Routing Index: .tkt/boards/INDEX.md`);
     return;
   }
 
@@ -296,16 +321,30 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Resolve active profile (using ticket key hint if first positional looks like a key)
+  // Extract smart multi-board routing hints from CLI flags
   const ticketKeyHint =
     ['get', 'inspect', 'update', 'transitions'].includes(command)
       ? positionals[0]
       : undefined;
+  const issueTypeHint = typeof flags.type === 'string' ? flags.type : undefined;
+  const labelsHint =
+    typeof flags.labels === 'string'
+      ? flags.labels
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+  const areaPathHint =
+    typeof flags['area-path'] === 'string' ? flags['area-path'] : undefined;
 
   const profile = resolveActiveProfile({
     profileName,
+    boardHint,
     provider: providerFlag,
     ticketKeyHint,
+    issueTypeHint,
+    labelsHint,
+    areaPathHint,
   });
 
   if (command === 'board-schema' || command === 'discover') {
@@ -331,6 +370,22 @@ async function main(): Promise<void> {
   if (command === 'me' || command === 'test') {
     const provider = getProviderInstance(profile);
     const info = await provider.testConnection();
+    const cfg = loadWorkspaceConfig();
+    const connectedBoards = cfg
+      ? Object.values(cfg.profiles).map((p) => ({
+          profileName: p.name,
+          id: p.board.id,
+          name: p.board.name,
+          boardUrl: p.board.boardUrl,
+        }))
+      : [
+          {
+            profileName: profile.name,
+            id: profile.board.id,
+            name: profile.board.name,
+            boardUrl: profile.board.boardUrl,
+          },
+        ];
     if (format === 'json' || format === 'agent') {
       console.log(
         JSON.stringify(
@@ -344,6 +399,7 @@ async function main(): Promise<void> {
               name: profile.board.name,
               boardUrl: profile.board.boardUrl,
             },
+            connectedBoards,
           },
           null,
           2
@@ -358,6 +414,12 @@ async function main(): Promise<void> {
       console.log(`  Project:         ${profile.project}`);
       console.log(`  Connected Board: ${profile.board.name} (ID: ${profile.board.id})`);
       console.log(`  Board URL:       ${profile.board.boardUrl}`);
+      if (connectedBoards.length > 1) {
+        console.log(`  All Connected Boards in Account (${connectedBoards.length}):`);
+        for (const cb of connectedBoards) {
+          console.log(`    • [${cb.profileName}] ${cb.name} (#${cb.id}) -> ${cb.boardUrl}`);
+        }
+      }
     }
     return;
   }
@@ -382,9 +444,31 @@ async function main(): Promise<void> {
     const provider = getProviderInstance(profile);
     const proj = (typeof flags.project === 'string' ? flags.project : profile.project);
     const boards = await provider.listBoards(proj);
+    const cfg = loadWorkspaceConfig();
+    const connectedIds = new Map<string, string>();
+    if (cfg) {
+      for (const p of Object.values(cfg.profiles)) {
+        connectedIds.set(String(p.board.id).toLowerCase(), p.name);
+      }
+    } else {
+      connectedIds.set(String(profile.board.id).toLowerCase(), profile.name);
+    }
+
     if (format === 'json' || format === 'agent') {
       console.log(
-        JSON.stringify({ ok: true, provider: profile.provider, project: proj, boards }, null, 2)
+        JSON.stringify(
+          {
+            ok: true,
+            provider: profile.provider,
+            project: proj,
+            boards: boards.map((b) => ({
+              ...b,
+              connectedProfile: connectedIds.get(String(b.id).toLowerCase()) ?? null,
+            })),
+          },
+          null,
+          2
+        )
       );
       return;
     }
@@ -392,7 +476,10 @@ async function main(): Promise<void> {
     console.log(`${'Board ID'.padEnd(24)} ${'Type'.padEnd(14)} Board Name`);
     console.log('-'.repeat(76));
     for (const b of boards) {
-      const activeMarker = b.id === profile.board.id ? '  <-- [CONNECTED]' : '';
+      const connectedProfile = connectedIds.get(String(b.id).toLowerCase());
+      const activeMarker = connectedProfile
+        ? `  <-- [CONNECTED: ${connectedProfile}${connectedProfile === profile.name ? ' (ACTIVE)' : ''}]`
+        : '';
       console.log(`${b.id.padEnd(24)} ${b.type.padEnd(14)} ${b.name}${activeMarker}`);
     }
     return;
@@ -548,7 +635,7 @@ async function main(): Promise<void> {
     const postRes = runPostHooks(profile, 'create', createdTicket);
 
     if (format === 'human') {
-      console.log(`\n✓ Ticket created successfully on board '${profile.board.name}'!`);
+      console.log(`\n✓ Ticket created successfully on board '${profile.board.name}' (Profile: ${profile.name})!`);
       console.log(`  Ticket Key:   ${createdTicket.key}`);
       console.log(`  Board Column: ${createdTicket.boardColumn ?? createdTicket.status} (Status: ${createdTicket.status})`);
       console.log(`  Direct Link:  ${createdTicket.directUrl}`);
