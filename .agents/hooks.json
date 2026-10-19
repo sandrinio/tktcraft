@@ -1,0 +1,28 @@
+{
+  "tkt-board-governance": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ../bin/tkt.js hook pre-tool",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ../bin/tkt.js hook post-tool",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

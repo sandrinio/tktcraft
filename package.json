@@ -1,0 +1,57 @@
+{
+  "name": "tkt-board-cli",
+  "version": "0.1.0",
+  "description": "Open-source AI & Human CLI for Jira and Azure DevOps with board-aware structured outputs, dynamic board setup, and pre/post-hooks.",
+  "license": "MIT",
+  "author": "Sandro Suladze",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sandrinio/tkt-board-cli.git"
+  },
+  "homepage": "https://github.com/sandrinio/tkt-board-cli#readme",
+  "bugs": {
+    "url": "https://github.com/sandrinio/tkt-board-cli/issues"
+  },
+  "type": "module",
+  "bin": {
+    "tkt": "./bin/tkt.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    ".agents/",
+    "README.md",
+    "SETUP.md",
+    "ARCHITECTURE.md",
+    "AGENTS.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build && npm test",
+    "dev": "node --experimental-strip-types src/cli.ts",
+    "start": "node ./bin/tkt.js",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "jira",
+    "azure-devops",
+    "ado",
+    "azure-boards",
+    "cli",
+    "ai-agent",
+    "mcp",
+    "hooks",
+    "kanban",
+    "scrum",
+    "issue-tracker"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}
