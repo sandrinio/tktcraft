@@ -1,6 +1,6 @@
 {
   "name": "tktcraft",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "tktcraft — Open-source AI & Human CLI for crafting structured Jira and Azure DevOps tickets suited for every board, with dynamic board setup and pre/post-hooks.",
   "license": "MIT",
   "author": "Sandro Suladze",
