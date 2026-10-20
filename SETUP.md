@@ -35,6 +35,15 @@ Do not require a consumer workspace to contain the package's source tree.
    test -f .tktcraft/.env || (umask 077; cp .env.example .tktcraft/.env)
    chmod 600 .tktcraft/.env
    ```
+   In Windows PowerShell, restrict the file to your account with an ACL instead:
+   ```powershell
+   Add-Content .gitignore "`n.tktcraft/"
+   New-Item -ItemType Directory -Force .tktcraft | Out-Null
+   if (-not (Test-Path .tktcraft\.env)) { Copy-Item .env.example .tktcraft\.env }
+   $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+   icacls .tktcraft\.env /grant:r "*${me}:(F)"
+   icacls .tktcraft\.env /inheritance:r
+   ```
 2. Ask the user which platform(s) they want to connect (**Jira**, **Azure DevOps**, or **Both**):
    - **If Jira Cloud**:
      - Ask for:

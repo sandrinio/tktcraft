@@ -9,6 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const phases = ['preview-create', 'create', 'preview-update', 'update', 'read'];
+// On Windows `npm` is a .cmd shim that spawnSync cannot start without a shell.
+const NPM_CLI = [process.env.npm_execpath, join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+  .find(path => path && /npm-cli\.c?js$/.test(path) && existsSync(path));
 
 export function parseOptions(args) {
   const options = { phase: 'preview-create' };
@@ -131,9 +134,10 @@ export async function runLive(options) {
     }
     return result.stdout;
   };
+  const npm = (args, cwd) => NPM_CLI ? run(process.execPath, [NPM_CLI, ...args], cwd) : run('npm', args, cwd);
   try {
     save();
-    const [packed] = JSON.parse(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temporary], ROOT));
+    const [packed] = JSON.parse(npm(['pack', '--ignore-scripts', '--json', '--pack-destination', temporary], ROOT));
     assert.ok(!packed.files.some(file => /(^|\/)\.env$|(^|\/)\.tkt(?:craft)?\//.test(file.path)), 'Credential/config path included in archive.');
     const archive = join(temporary, packed.filename);
     const unpacked = spawnSync('tar', ['-xOf', archive], { maxBuffer: 20 * 1024 * 1024 });
@@ -149,7 +153,7 @@ export async function runLive(options) {
       name: 'tkt-live-verification', private: true, type: 'module',
       dependencies: { 'undici-types': pathToFileURL(join(ROOT, 'node_modules/undici-types')).href },
     }));
-    run('npm', ['install', '--offline', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund',
+    npm(['install', '--offline', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund',
       '--package-lock=false', archive], workspace);
     writeFileSync(join(workspace, '.gitignore'), 'node_modules/\n');
     upsertDotEnvValues(Object.fromEntries(keys.map(key => [key, credentials[key]])), workspace);

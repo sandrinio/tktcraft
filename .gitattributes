@@ -1,0 +1,2 @@
+# Packaged assets and test fixtures are compared byte-for-byte; keep LF on Windows checkouts.
+* text=auto eol=lf
