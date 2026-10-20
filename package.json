@@ -1,6 +1,6 @@
 {
   "name": "tktcraft",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "tktcraft — Open-source AI & Human CLI for crafting structured Jira and Azure DevOps tickets suited for every board, with dynamic board setup and pre/post-hooks.",
   "license": "MIT",
   "author": "Sandro Suladze",
@@ -22,11 +22,14 @@
     "dist/",
     "src/",
     ".agents/",
+    ".github/hooks/tkt-governance.json",
     "README.md",
     "ONBOARDING.md",
     "SETUP.md",
     "ARCHITECTURE.md",
     "AGENTS.md",
+    "COPILOT-COMPATIBILITY.md",
+    "tests/fixtures/copilot-hook-contracts.json",
     "LICENSE"
   ],
   "scripts": {
@@ -35,6 +38,8 @@
     "dev": "node --experimental-strip-types src/cli.ts",
     "start": "node ./bin/tkt.js",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:package": "npm run build && node --experimental-strip-types --test tests/integration/packaged-install.test.ts",
+    "test:live": "npm run build && node scripts/copilot-live.mjs",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

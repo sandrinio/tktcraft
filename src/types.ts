@@ -157,7 +157,7 @@ export interface ProfileGovernanceConfig {
   enforceBoardSchema: boolean;
   /** Automatically apply board placement rules (labels / area path) on create (Default: true) */
   autoApplyBoardPlacement: boolean;
-  /** Automatically append audit log entries to .tkt/audit.jsonl (Default: true) */
+  /** Automatically append audit log entries to .tktcraft/audit.jsonl (Default: true) */
   auditLog: boolean;
   /** Optional custom pre-hooks */
   preHooks?: HookScriptConfig[];
@@ -175,7 +175,7 @@ export interface TktProfile {
   project: string;
   /** Auth mode: cloud (Jira Cloud Basic), datacenter (Jira DC Bearer), pat (ADO) */
   authType?: 'cloud' | 'datacenter' | 'pat' | 'bearer';
-  /** Env variable names holding credentials (keeps secrets out of .tkt/config.json) */
+  /** Env variable names holding credentials (keeps secrets out of .tktcraft/config.json) */
   envVars?: {
     url?: string;
     user?: string;

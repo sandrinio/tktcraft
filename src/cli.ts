@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureWorkspaceHome, getWorkspacePath } from './config/paths.ts';
 import {
   generateBoardContextMarkdown,
   generateMultiBoardIndexMarkdown,
@@ -18,6 +19,7 @@ import {
   renderTransitionsOutput,
 } from './formatters/output.ts';
 import { runAgentHarnessHookCli } from './hooks/agent-harness.ts';
+import { runCopilotHookCli } from './hooks/copilot.ts';
 import {
   enforceNoDeleteArgv,
   runCreatePreHooks,
@@ -183,9 +185,11 @@ TICKET & BOARD WORKFLOW COMMANDS:
 AI AGENT HARNESS HOOK COMMANDS:
   tkt hook pre-tool             PreToolUse hook interceptor (blocks deletes, enforces confirmation on create/update)
   tkt hook post-tool            PostToolUse hook processor (enforces Direct + Board View URL output)
+  tkt hook copilot-pre-tool     Copilot CLI / VS Code permission adapter
+  tkt hook copilot-post-tool    Copilot CLI / VS Code result-context adapter
 
 GLOBAL OPTIONS:
-  --profile <NAME>              Target a specific connected board profile from .tkt/config.json
+  --profile <NAME>              Target a specific connected board profile from .tktcraft/config.json
   --board, -b <ID_OR_NAME>      Target a specific connected board by Board ID, Board Name, or Profile Alias
   --provider <jira|ado>         Explicitly select provider ('jira' or 'ado')
   --format, -o <MODE>           Output format: human (default) | json | agent | md
@@ -199,8 +203,14 @@ async function main(): Promise<void> {
 
   // If invoked as `tkt hook pre-tool` or `tkt hook post-tool`, handle stdin JSON immediately
   if (rawArgv[0] === 'hook') {
-    const mode = rawArgv[1] === 'post-tool' ? 'post-tool' : 'pre-tool';
-    runAgentHarnessHookCli(mode);
+    const mode = rawArgv[1];
+    if (mode === 'copilot-pre-tool' || mode === 'copilot-post-tool') {
+      runCopilotHookCli(mode === 'copilot-pre-tool' ? 'pre-tool' : 'post-tool');
+    } else if (mode === 'pre-tool' || mode === 'post-tool') {
+      runAgentHarnessHookCli(mode);
+    } else {
+      throw new Error('Unknown hook mode. Use pre-tool, post-tool, copilot-pre-tool, or copilot-post-tool.');
+    }
     return;
   }
 
@@ -301,7 +311,7 @@ async function main(): Promise<void> {
         `  • ${name.padEnd(20)} | Project: ${p.project.padEnd(10)} | Board: ${p.board.name} (#${p.board.id})${def}${routeSuffix}`
       );
     }
-    console.log(`\nMulti-Board Routing Index: .tkt/boards/INDEX.md`);
+    console.log(`\nMulti-Board Routing Index: .tktcraft/boards/INDEX.md`);
     return;
   }
 
@@ -321,10 +331,11 @@ async function main(): Promise<void> {
     };
 
     const pkgAssetsDir = join(PACKAGE_ROOT, '.agents', 'skills', 'tkt-ops', 'assets');
-    const customDir = join(process.cwd(), '.tkt', 'templates');
+    const customDir = getWorkspacePath(process.cwd(), 'templates');
 
     if (flags.init || flags.customize) {
       const { mkdirSync, copyFileSync } = await import('node:fs');
+      ensureWorkspaceHome(process.cwd());
       mkdirSync(customDir, { recursive: true });
       const files = [
         'story_template.md',
@@ -340,7 +351,7 @@ async function main(): Promise<void> {
           copyFileSync(src, dest);
         }
       }
-      console.log(`✓ Scaffolded customizable templates in .tkt/templates/ (${files.join(', ')})`);
+      console.log(`✓ Scaffolded customizable templates in .tktcraft/templates/ (${files.join(', ')})`);
       return;
     }
 
@@ -350,6 +361,7 @@ async function main(): Promise<void> {
       ...(boardHint ? [join(customDir, boardHint, filename)] : []),
       ...(profileName ? [join(customDir, profileName, filename)] : []),
       join(customDir, filename),
+      getWorkspacePath(process.cwd(), 'skills', 'tkt-ops', 'assets', filename),
       join(process.cwd(), '.agents', 'skills', 'tkt-ops', 'assets', filename),
       join(pkgAssetsDir, filename),
     ];

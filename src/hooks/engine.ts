@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { resolveTargetStatusesFromColumnOrStatus } from '../config/manager.ts';
+import { ensureWorkspaceHome, getWorkspacePath } from '../config/paths.ts';
 import { stagePreHookApprovalToken } from './agent-harness.ts';
 import type { DuplicateCandidate, TrackerProvider } from '../providers/base.ts';
 import type {
@@ -143,7 +144,7 @@ export function renderPreHookPreviewBox(
 }
 
 function consumeValidApprovalToken(workspaceDir: string = process.cwd()): boolean {
-  const tokenPath = join(workspaceDir, '.tkt', 'pending-approval.json');
+  const tokenPath = getWorkspacePath(workspaceDir, 'pending-approval.json');
   if (!existsSync(tokenPath)) {
     return false;
   }
@@ -561,7 +562,7 @@ export function describeChangesApplied(
  * Runs Post-Hooks after a ticket is created or updated:
  * 1. Builds brief Post-Hook Metadata Summary of what was done
  * 2. Verifies & formats Direct Ticket Link + Connected Board View Link
- * 3. Appends structured audit entry to `.tkt/audit.jsonl`
+ * 3. Appends structured audit entry to `.tktcraft/audit.jsonl`
  * 4. Executes any custom post-hook scripts/webhooks
  */
 export function runPostHooks(
@@ -578,7 +579,7 @@ export function runPostHooks(
 
   if (profile.governance.auditLog) {
     try {
-      const auditPath = join(workspaceDir, '.tkt', 'audit.jsonl');
+      const auditPath = join(ensureWorkspaceHome(workspaceDir), 'audit.jsonl');
       mkdirSync(dirname(auditPath), { recursive: true });
       const entry = {
         timestamp,

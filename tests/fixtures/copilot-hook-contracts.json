@@ -1,0 +1,119 @@
+{
+  "baselineDate": "2026-10-20",
+  "provenance": "Documentation-derived Local/Copilot baseline; observedCopilot contains separately labeled runtime evidence",
+  "testedAgentVersion": null,
+  "sources": {
+    "local": "https://code.visualstudio.com/docs/agents/reference/hooks-reference",
+    "copilot": "https://docs.github.com/en/copilot/reference/hooks-reference"
+  },
+  "limitations": [
+    "Local tool name is a placeholder pending a versioned debug-log capture.",
+    "Empty tool arguments describe only the documented envelope, not a verified terminal invocation.",
+    "Synthetic workspace, session, and result values contain no provider credentials or live tickets."
+  ],
+  "observedCopilot": {
+    "observedAt": "2026-10-20",
+    "environment": "VS Code Copilot SDK agent host",
+    "installedVSCodeVersion": "1.142.0 arm64",
+    "sdkVersion": null,
+    "provenance": "Shape-only metadata from instrumented read-only Azure and Jira consumer chats; command/session/workspace values below are sanitized replacements",
+    "toolName": "bash",
+    "preInput": {
+      "sessionId": "observed-session",
+      "timestamp": 1792454400000,
+      "cwd": "/example/consumer workspace",
+      "toolName": "bash",
+      "toolArgs": {
+        "command": "npx --no-install tkt get TEST-1 --format agent",
+        "description": "Read the existing verification ticket"
+      }
+    },
+    "preOutput": {},
+    "postInputKeys": ["sessionId", "timestamp", "cwd", "toolName", "toolArgs", "toolResult"],
+    "postResultKeys": ["resultType", "textResultForLlm"],
+    "postOutputKeys": ["additionalContext"],
+    "postContextCanaryDelivered": true,
+    "cwdCanonicalMatchObserved": true,
+    "autonomousNativeControls": {
+      "deny": { "toolExecuted": false, "hookExitCode": 0 },
+      "error": { "toolExecuted": false, "hookExitCode": 2 },
+      "timeout": {
+        "configuredMs": 15000,
+        "injectedDelayMs": 20000,
+        "observedPreToPostMs": 15063,
+        "toolExecuted": true,
+        "diagnosticReportedToAgent": false
+      },
+      "ask": { "toolExecuted": true, "humanApprovalCertified": false },
+      "provenance": "Credential-free printf-only native controls; no actual ticket command or provider request"
+    },
+    "limitations": [
+      "The installed VS Code version is known; the exact active SDK build was not captured.",
+      "Fixture CLIs intercepted mutations before networking; sessions performed reads only.",
+      "A shape-only wrapper forwarded the installed hook and appended a post-context canary.",
+      "Unattended ask allowed the inert control to run; no real human approval or decline was certified.",
+      "Approved writes through actual harnesses, trust/disabled hooks, Local harness, and Copilot CLI remain unverified."
+    ]
+  },
+  "local": {
+    "preInput": {
+      "hook_event_name": "PreToolUse",
+      "session_id": "reference-session",
+      "timestamp": "2026-10-20T00:00:00.000Z",
+      "cwd": "/example/consumer workspace",
+      "tool_name": "<local-terminal-tool>",
+      "tool_input": {},
+      "tool_use_id": "reference-tool"
+    },
+    "askOutput": {
+      "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": "Show the concrete preview and obtain explicit approval."
+      }
+    },
+    "postInput": {
+      "hook_event_name": "PostToolUse",
+      "session_id": "reference-session",
+      "timestamp": "2026-10-20T00:00:00.000Z",
+      "cwd": "/example/consumer workspace",
+      "tool_name": "<local-terminal-tool>",
+      "tool_input": {},
+      "tool_use_id": "reference-tool",
+      "tool_response": "Direct Link: https://example.invalid/ticket/TEST-1\nBoard Link: https://example.invalid/board/1"
+    },
+    "postOutput": {
+      "hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": "Display both the direct ticket and connected board links."
+      }
+    }
+  },
+  "copilot": {
+    "preInput": {
+      "sessionId": "reference-session",
+      "timestamp": 1792454400000,
+      "cwd": "/example/consumer workspace",
+      "toolName": "bash",
+      "toolArgs": {}
+    },
+    "askOutput": {
+      "permissionDecision": "ask",
+      "permissionDecisionReason": "Show the concrete preview and obtain explicit approval."
+    },
+    "postInput": {
+      "sessionId": "reference-session",
+      "timestamp": 1792454400000,
+      "cwd": "/example/consumer workspace",
+      "toolName": "bash",
+      "toolArgs": {},
+      "toolResult": {
+        "resultType": "success",
+        "textResultForLlm": "Direct Link: https://example.invalid/ticket/TEST-1\nBoard Link: https://example.invalid/board/1"
+      }
+    },
+    "postOutput": {
+      "additionalContext": "Display both the direct ticket and connected board links."
+    }
+  }
+}

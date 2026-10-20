@@ -27,7 +27,7 @@ When evaluating whether to rely on raw **Jira / Azure DevOps MCP servers** versu
 | **Context Window & Token Efficiency** | Loads 15–30 verbose JSON tool schemas into the LLM context on **every single conversation turn**, burning thousands of tokens even when no ticket operations occur. | **Zero idle token cost.** Progressive disclosure loads `.agents/skills/tkt-ops/SKILL.md` only when ticket work is requested, and `--format agent` returns compact, token-efficient JSON. |
 | **Pre-Hook Governance & Read/Write Safety** | MCP servers often multiplex writes through generic tools (e.g., `executeWrite`), making tool-name deny lists ineffective at enforcing fine-grained rules (such as blocking deletes while allowing comments, or requiring human confirmation per board). | **Deterministic Dual-Layer Pre-Hooks:** Both `.agents/hooks.json` (`PreToolUse`) and the `tktcraft` CLI engine hard-block `delete`/`remove`/`purge` and force a structured human confirmation preview (`force_ask`) before any `create` or `update`. |
 | **Board Placement Awareness** | Creates tickets at the flat project level — frequently missing the board's JQL filter label (`labels = EAE-Implementation`) or ADO Team `AreaPath`, causing AI-created tickets to vanish from the team's board. | **Mandatory Board Selection at Setup:** `tktcraft setup` forces choosing a target board, introspects its filter/settings, and automatically injects required board labels (Jira) or `AreaPath`/`IterationPath` (ADO). |
-| **Authentication Simplicity** | Remote MCP servers require per-site browser OAuth grants or special service-account tokens with fixed, non-editable scopes that expire silently. | Uses standard, developer-friendly `.env` API tokens (`JIRA_TOKEN`, `ADO_TOKEN`) supporting Jira Cloud, Jira Data Center, and Azure DevOps Services/Server. |
+| **Authentication Simplicity** | Remote MCP servers require per-site browser OAuth grants or special service-account tokens with fixed, non-editable scopes that expire silently. | Uses standard, developer-friendly `.tktcraft/.env` API tokens (`JIRA_TOKEN`, `ADO_TOKEN`) supporting Jira Cloud, Jira Data Center, and Azure DevOps Services/Server. |
 | **Best MCP Patterns Adopted into `tktcraft`** | • `discover` / `createmeta` schema inspection<br>• Pre-creation duplicate search<br>• `Filed by:` attribution & git context enrichment | **Built natively into `tktcraft`:**<br>• `tktcraft discover` / `tktcraft board-schema`<br>• Automatic duplicate detection in `tktcraft create` pre-hook<br>• `Filed by:` provenance in all board templates |
 
 ---
@@ -37,8 +37,8 @@ When evaluating whether to rely on raw **Jira / Azure DevOps MCP servers** versu
 Most issue-tracker tools treat Jira and Azure DevOps as **flat project databases**. In reality, product and engineering teams work on **Boards** — and different boards inside the *same* project often have completely different workflows, issue types, columns, and rules (e.g., a *Product Discovery Board* vs. an *Engineering Sprint Board* vs. a *Bug Triage Board*).
 
 `tktcraft` is built around **five architectural pillars**:
-1. **Mandatory Board Selection During Setup (`tktcraft setup`)**: Users and AI agents must explicitly choose which board to connect to (supporting multiple named board profiles in `.tkt/config.json`).
-2. **3-Tier Board Intelligence & Living `board.md` Generation**: Combines **(1) Formal API Schema Introspection**, **(2) Empirical Mining of Recent Board Tickets**, and **(3) Human Playbook & Gatekeeping Rules** into `.tkt/boards/<profile>.md` (and `board.md`).
+1. **Mandatory Board Selection During Setup (`tktcraft setup`)**: Users and AI agents must explicitly choose which board to connect to (supporting multiple named board profiles in `.tktcraft/config.json`).
+2. **3-Tier Board Intelligence & Living `board.md` Generation**: Combines **(1) Formal API Schema Introspection**, **(2) Empirical Mining of Recent Board Tickets**, and **(3) Human Playbook & Gatekeeping Rules** into `.tktcraft/boards/<profile>.md` (and `board.md`).
 3. **Board-Adaptive Multi-Field Formatting**: Automatically converts unified Markdown into **Jira ADF v1** or splits it across **Azure DevOps's dedicated board fields** (`System.Description`, `Microsoft.VSTS.Common.AcceptanceCriteria`, `Microsoft.VSTS.TCM.ReproSteps`, `Microsoft.VSTS.TCM.SystemInfo`).
 4. **Dual-Layer Pre-Hooks & Post-Hooks**: Enforces safety, duplicate detection, board schema validation, preview confirmation, audit logging, and post-execution **Direct Ticket + Connected Board View deep-links** at both the AI Agent Harness layer and the CLI layer.
 5. **Zero Runtime Dependencies & Multi-Format Structured Outputs (`human`, `agent`, `json`, `md`)**.
@@ -55,14 +55,14 @@ flowchart TB
     end
 
     subgraph HarnessLayer["2. AI Agent Harness Layer (.agents/)"]
-        Skill["📘 Skill & Onboarding Guide<br/><code>.agents/skills/tkt-ops/SKILL.md</code><br/><code>SETUP.md</code> + <code>.tkt/boards/&lt;profile&gt;.md</code>"]
+        Skill["📘 Skill & Onboarding Guide<br/><code>.agents/skills/tkt-ops/SKILL.md</code><br/><code>SETUP.md</code> + <code>.tktcraft/boards/&lt;profile&gt;.md</code>"]
         HooksJson["🛡️ Agent Lifecycle Hooks<br/><code>.agents/hooks.json</code><br/>• <code>PreToolUse</code> -> <code>tkt hook pre-tool</code><br/>• <code>PostToolUse</code> -> <code>tkt hook post-tool</code>"]
     end
 
     subgraph CliCore["3. tktcraft CLI Core (Zero-Dependency TypeScript / Node.js)"]
         Router["⚡ CLI Dispatcher<br/><code>src/cli.ts</code> (<code>tktcraft</code> / <code>tkt</code>)"]
         Wizard["🧭 Setup & Board Intelligence Engine<br/><code>src/setup/wizard.ts</code>"]
-        CfgMgr["🗂️ Config, Profile & board.md Manager<br/><code>src/config/manager.ts</code><br/>(<code>.tkt/config.json</code> + <code>.env</code> + <code>.tkt/boards/*.md</code>)"]
+        CfgMgr["🗂️ Config, Profile & board.md Manager<br/><code>src/config/manager.ts</code><br/>(<code>.tktcraft/config.json</code> + <code>.tktcraft/.env</code> + <code>.tktcraft/boards/*.md</code>)"]
         HookEngine["🔒 CLI Pre-Hook & Post-Hook Engine<br/><code>src/hooks/engine.ts</code>"]
         Formatters["📐 Structured Formatters<br/>• <code>markdown-adf.ts</code> (Jira ADF v1)<br/>• <code>markdown-ado.ts</code> (ADO HTML + Field Splitter)<br/>• <code>output.ts</code> (human | agent | json | md)"]
     end
@@ -88,7 +88,7 @@ flowchart TB
 
 ## 4. Deep Board Intelligence: What We Collect to Understand How a Team Works (`board.md`)
 
-To let an AI agent (or new team member) work seamlessly on any Jira or Azure DevOps board without hardcoded rules, `tktcraft` collects **three tiers of board intelligence** and compiles them into `.tkt/boards/<profile>.md` (and `board.md`).
+To let an AI agent (or new team member) work seamlessly on any Jira or Azure DevOps board without hardcoded rules, `tktcraft` collects **three tiers of board intelligence** and compiles them into `.tktcraft/boards/<profile>.md` (and `board.md`).
 
 ```mermaid
 flowchart LR
@@ -101,8 +101,8 @@ flowchart LR
     T1 --> Compiler["<b><code>tktcraft setup / discover</code></b><br/>Board Intelligence Compiler"]
     T2 --> Compiler
     T3 --> Compiler
-    Compiler --> BoardMd["📄 <b><code>.tkt/boards/&lt;profile&gt;.md</code></b><br/>Living AI & Human Board Guide"]
-    Compiler --> ConfigJson["⚙️ <b><code>.tkt/config.json</code></b><br/>Machine-Enforced Hook & Routing Schema"]
+    Compiler --> BoardMd["📄 <b><code>.tktcraft/boards/&lt;profile&gt;.md</code></b><br/>Living AI & Human Board Guide"]
+    Compiler --> ConfigJson["⚙️ <b><code>.tktcraft/config.json</code></b><br/>Machine-Enforced Hook & Routing Schema"]
 ```
 
 ### 4.1 Tier 1: What We Extract Directly from Jira & Azure DevOps Configuration APIs
@@ -159,9 +159,9 @@ Real product and engineering teams frequently work across **multiple boards with
 
 > [!IMPORTANT]
 > **Single-Account Multi-Board Isolation**:
-> `.tkt/config.json` binds a workspace to **one account/provider at a time** (`provider: "jira"` **OR** `provider: "ado"`, never mixed `jira + ado` in the same workspace) and allows connecting **1 to $N$ boards** within that account.
+> `.tktcraft/config.json` binds a workspace to **one account/provider at a time** (`provider: "jira"` **OR** `provider: "ado"`, never mixed `jira + ado` in the same workspace) and allows connecting **1 to $N$ boards** within that account.
 
-### 5.2 Multi-Board Setup & Master Routing Index (`.tkt/boards/INDEX.md`)
+### 5.2 Multi-Board Setup & Master Routing Index (`.tktcraft/boards/INDEX.md`)
 During `tktcraft setup`, the user or AI agent can select **one or multiple comma-separated boards** from the same account (`--board "4893,4887"` or `"1, 2"` interactively):
 
 ```mermaid
@@ -170,7 +170,7 @@ sequenceDiagram
     actor User as Human / AI Agent
     participant Wizard as tktcraft setup (wizard.ts)
     participant API as Jira Agile API / ADO Work API
-    participant Disk as Local Workspace (.tkt/ & .env)
+    participant Disk as Local Workspace (.tktcraft/)
 
     User->>Wizard: Run `tktcraft setup` (select Jira or Azure DevOps account)
     Wizard->>API: Authenticate (`GET /rest/api/3/myself` or `GET /_apis/connectionData`)
@@ -181,10 +181,10 @@ sequenceDiagram
     loop For each selected Board in the Account
         Wizard->>API: Tier 1: Introspect Columns, JQL/WIQL Filter, Routed Types, AreaPath & Fields
         Wizard->>API: Tier 2: Sample ~25 board tickets for empirical conventions
-        Wizard->>Disk: Generate per-board guide `.tkt/boards/<board-alias>.md`
+        Wizard->>Disk: Generate per-board guide `.tktcraft/boards/<board-alias>.md`
     end
-    Wizard->>Disk: Save all connected boards to `.tkt/config.json`
-    Wizard->>Disk: Generate Master Multi-Board Routing Map `.tkt/boards/INDEX.md`
+    Wizard->>Disk: Save all connected boards to `.tktcraft/config.json`
+    Wizard->>Disk: Generate Master Multi-Board Routing Map `.tktcraft/boards/INDEX.md`
 ```
 
 ### 5.3 Deterministic Cross-Board Auto-Routing (`resolveActiveProfile`)
@@ -198,7 +198,7 @@ When multiple boards are connected in the same Jira or Azure DevOps account, `tk
 4. **Azure DevOps `AreaPath` Match (`--area-path <PATH>`)**:
    - Matches against `board.placement.defaultAreaPath` across multi-team ADO boards.
 5. **Ticket Inspection Cross-Board Resolution (`resolveMatchingBoardProfileForTicket`)**:
-   - When running `tktcraft get AIEAE-1900`, the provider fetches the ticket and matches its `issueType`, `labels`, and `areaPath` against all connected boards in `.tkt/config.json` so the output displays the **exact board column and deep-link URL** for the board where that ticket actually lives.
+   - When running `tktcraft get AIEAE-1900`, the provider fetches the ticket and matches its `issueType`, `labels`, and `areaPath` against all connected boards in `.tktcraft/config.json` so the output displays the **exact board column and deep-link URL** for the board where that ticket actually lives.
 
 ---
 
@@ -242,7 +242,7 @@ sequenceDiagram
     participant Harness as Layer 1: .agents/hooks.json<br/>(tkt hook pre-tool / post-tool)
     participant CLI as Layer 2: CLI Hook Engine<br/>(src/hooks/engine.ts)
     participant Tracker as Jira / Azure DevOps API
-    participant Audit as .tkt/audit.jsonl
+    participant Audit as .tktcraft/audit.jsonl
 
     AI->>Harness: Proposes `run_command`: `tkt create ...`
     alt Command contains `delete / remove / purge`
@@ -272,18 +272,47 @@ Configured via [.agents/hooks.json](.agents/hooks.json):
 - **`PostToolUse` (`tkt hook post-tool`)**:
   - Verifies post-execution output and returns `{}` per the agent harness `PostToolUse` protojson contract.
 
+The experimental Copilot adapter in [src/hooks/copilot.ts](src/hooks/copilot.ts)
+reuses this governance through one
+[versioned registration](.github/hooks/tkt-governance.json). It translates Local
+snake-case and Copilot camelCase payloads, returns native `ask`/`deny` envelopes,
+and injects both post-hook links as context. Reads defer to normal runtime
+permissions; malformed relevant inputs and execution errors exit `2`.
+Dry-run recognition is limited to direct supported CLI invocations with a real
+flag, not quoted text, shell substitutions, or compound commands.
+Native `ask` is a permission request, not an authorization record: an unattended
+Copilot SDK probe continued after receiving it. The staged token is not proof
+of human consent. Agent instructions still require the exact preview and
+explicit approval; unattended Copilot writes are not supported.
+
+[Workspace integration installation](src/setup/agent-integration.ts) binds the
+launcher to the installed package, preserves unrelated hooks/instruction text,
+and uses `.tktcraft/agent-integration.json` hashes to upgrade only unmodified managed
+assets. Custom governance conflicts are reported before integration files are
+written. Installation does not verify activation; see
+[the evidence matrix](COPILOT-COMPATIBILITY.md).
+
+Canonical workspace paths are centralized in [src/config/paths.ts](src/config/paths.ts).
+State, private credentials, complete skill resources and installed launchers
+live in `.tktcraft/`. Native hook registrations, a small skill discovery entry,
+and managed instructions remain outside only because harnesses require their
+standard locations. No symlinks are used. Legacy state is renamed, not deleted;
+competing directories stop migration. Custom skill content is retained inside
+the canonical home. A root `.env` remains a read-only fallback so unrelated
+application settings are never relocated; canonical credentials take precedence.
+
 ### 7.2 Layer 2: Built-In CLI Pre-Hooks & Post-Hooks (`src/hooks/engine.ts`)
 Even when `tktcraft` is run outside an AI harness (e.g., directly by a human in `zsh`/`bash` or by CI scripts), the CLI enforces:
 - **Built-in Pre-Hooks**:
   1. `no-delete-guard`: Exits with code `2` if any forbidden deletion flag/subcommand is present.
-  2. `board-schema-validator`: Checks the requested `--type` and required fields against the connected board's discovered schema in `.tkt/config.json`.
+  2. `board-schema-validator`: Checks the requested `--type` and required fields against the connected board's discovered schema in `.tktcraft/config.json`.
   3. `board-placement-injector`: Injects required board labels (Jira) or default team `AreaPath`/`IterationPath` (Azure DevOps).
   4. `duplicate-detector`: Queries the tracker for existing tickets matching distinctive keywords from `--summary` and surfaces matches in the preview box.
   5. `preview-confirm-gate`: Renders the `[PRE-HOOK PREVIEW]` table and requires interactive `[y/N]` confirmation or `--yes`.
 - **Built-in Post-Hooks**:
   1. `board-links-verifier`: Computes and outputs both the **Direct Ticket Link** (`/browse/KEY` or `/_workitems/edit/ID`) and the **Connected Board View Link** (`?selectedIssue=KEY` or `?workitem=ID`).
-  2. `audit-log`: Appends an immutable JSONL record to `.tkt/audit.jsonl`.
-  3. `custom-post-hooks`: Runs any shell commands or webhooks configured in `.tkt/config.json` (`governance.postHooks`) with `TKT_TICKET_KEY`, `TKT_DIRECT_URL`, `TKT_BOARD_URL`, and `TKT_BOARD_COLUMN` environment variables.
+  2. `audit-log`: Appends an immutable JSONL record to `.tktcraft/audit.jsonl`.
+  3. `custom-post-hooks`: Runs any shell commands or webhooks configured in `.tktcraft/config.json` (`governance.postHooks`) with `TKT_TICKET_KEY`, `TKT_DIRECT_URL`, `TKT_BOARD_URL`, and `TKT_BOARD_COLUMN` environment variables.
 
 ---
 
@@ -297,7 +326,8 @@ tkt_management_cli/
 │   ├── cli.ts                        # Command-line argument parser & subcommand dispatcher
 │   ├── types.ts                      # Unified Ticket, ConnectedBoardConfig, Profile, and Hook contracts
 │   ├── config/
-│   │   └── manager.ts                # .env + .tkt/config.json loader, profile auto-detection & board.md generator
+│   │   ├── paths.ts                  # Canonical workspace home and legacy-state migration
+│   │   └── manager.ts                # .tktcraft/.env + config loader, profile detection & board.md generator
 │   ├── setup/
 │   │   └── wizard.ts                 # Interactive & CLI-flag setup wizard with mandatory board selection
 │   ├── providers/
@@ -329,5 +359,5 @@ tkt_management_cli/
 
 ## 9. Security & Secret Isolation
 
-- **Secrets Never Touch `.tkt/config.json` or `board.md`**: API tokens (`JIRA_TOKEN`, `ADO_TOKEN`) and user emails live exclusively in `.env` (which is gitignored) or environment variables.
-- **Shareable Board Profiles**: `.tkt/config.json` and `.tkt/boards/<profile>.md` store only non-secret board metadata (board IDs, column-to-status maps, required label rules, empirical conventions, and field definitions), making them safe to inspect or commit to a team repository.
+- **Secrets Never Touch `.tktcraft/config.json` or `board.md`**: API tokens (`JIRA_TOKEN`, `ADO_TOKEN`) and user emails live exclusively in `.tktcraft/.env` (which is gitignored) or environment variables.
+- **Local by Default**: The complete `.tktcraft/` directory is ignored, including audit and approval state. Board profiles and guides contain metadata rather than credentials, but review individual files before explicitly sharing them; never commit the whole directory or its `.env`.

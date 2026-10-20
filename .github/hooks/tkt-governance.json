@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "command": "node .agents/tkt-hook.cjs copilot-pre-tool",
+        "timeoutSec": 15
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "command": "node .agents/tkt-hook.cjs copilot-post-tool",
+        "timeoutSec": 15
+      }
+    ]
+  }
+}

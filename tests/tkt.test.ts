@@ -202,8 +202,8 @@ describe('3. Single-Account Multi-Board Routing (Jira+Jira & ADO+ADO) & Tier 2 E
       generateBoardContextMarkdown(discoveryProfile, tmpDir);
       generateBoardContextMarkdown(deliveryProfile, tmpDir);
 
-      // Verify .tkt/boards/INDEX.md is generated for multi-board workspace
-      const indexPath = join(tmpDir, '.tkt', 'boards', 'INDEX.md');
+      // Verify .tktcraft/boards/INDEX.md is generated for multi-board workspace
+      const indexPath = join(tmpDir, '.tktcraft', 'boards', 'INDEX.md');
       assert.ok(existsSync(indexPath));
       const indexMd = readFileSync(indexPath, 'utf-8');
       assert.ok(indexMd.includes('EAE Product Discovery & Intake'));
@@ -467,7 +467,7 @@ describe('4. Pre-Hooks & Post-Hooks (AI Harness & CLI Pipeline)', () => {
       assert.ok(postRes.executedHooks.includes('audit-log'));
 
       const auditContent = readFileSync(
-        join(tmpDir, '.tkt', 'audit.jsonl'),
+        join(tmpDir, '.tktcraft', 'audit.jsonl'),
         'utf-8'
       );
       const parsed = JSON.parse(auditContent.trim());

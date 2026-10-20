@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .tkt/
+.tktcraft/
 .agents/.tkt/
 .DS_Store
 *.log

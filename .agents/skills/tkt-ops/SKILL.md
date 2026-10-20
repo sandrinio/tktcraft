@@ -14,13 +14,13 @@ This skill defines the operating playbook, connection guide, pre-hook/post-hook 
 
 ## 1. Connection & Board Setup Requirement
 
-Before creating or updating tickets, verify that a board profile is connected in [.tkt/config.json](../../.tkt/config.json):
+Before creating or updating tickets, verify that a board profile is connected in [.tktcraft/config.json](../../../.tktcraft/config.json):
 ```bash
 npx tkt me
 npx tkt board-schema
 ```
 
-If no board profile is configured yet, follow [SETUP.md](../../SETUP.md):
+If no board profile is configured yet, run `npx --no-install tkt onboarding` for the installed setup guide:
 1. List available boards in the project:
    ```bash
    npx tkt boards --provider <jira|ado> --project <PROJECT>
@@ -29,7 +29,7 @@ If no board profile is configured yet, follow [SETUP.md](../../SETUP.md):
    ```bash
    npx tkt setup --provider <jira|ado> --project "<PROJECT>" --board "<BOARD_ID_OR_NAME>" --non-interactive
    ```
-   This introspects the chosen board's **Columns $\leftrightarrow$ Statuses**, **Required Filter Labels / Team AreaPath**, and **Issue / Work-Item Type Fields**, saving the schema to `.tkt/config.json` and `.tkt/boards/<profile>.md`.
+   This introspects the chosen board's **Columns $\leftrightarrow$ Statuses**, **Required Filter Labels / Team AreaPath**, and **Issue / Work-Item Type Fields**, saving the schema to `.tktcraft/config.json` and `.tktcraft/boards/<profile>.md`.
 
 ---
 
@@ -39,17 +39,23 @@ If no board profile is configured yet, follow [SETUP.md](../../SETUP.md):
 > [!CAUTION]
 > **Ticket Deletion Is Strictly Prohibited**
 > Under no circumstances may Jira issues or Azure DevOps work items be deleted, purged, or removed.
-> - Both [.agents/hooks.json](../hooks.json) (`PreToolUse`) and the `tkt` CLI permanently block and exit with code `2` on any `delete`, `remove`, `destroy`, or `purge` argument.
+> - The `tkt` CLI blocks deletion. Harness hooks also request denial: legacy registration is in [.agents/hooks.json](../../hooks.json), and experimental Copilot registration is in [.github/hooks/tkt-governance.json](../../../.github/hooks/tkt-governance.json).
+> - Installed hook files do not prove that hooks are active. Verify discovery and execution in the selected harness; disabled hooks, trust, and runtime policy affect enforcement.
 > - If a ticket was created by mistake or is obsolete, transition it to **Closed / Removed / Cancelled** and add a comment explaining why.
 
 ### B. Mandatory Pre-Hook Confirmation for All Create & Update Actions
 > [!IMPORTANT]
 > **Never Execute Create or Update Autonomously Without Preview & Approval**
 > Whenever the user requests creating a new ticket or updating an existing ticket (editing summary/description, adding a comment, transitioning board columns, or changing assignee/labels), the agent **MUST ALWAYS**:
-> 1. Check the connected board's schema (`.tkt/boards/<profile>.md` or `npx tkt board-schema`).
+> 1. Check the connected board's schema (`.tktcraft/boards/<profile>.md` or `npx tkt board-schema`).
 > 2. Run a dry-run preview (`npx tkt create ... --dry-run`) or formulate the exact payload.
 > 3. Present the structured **Pre-Execution Confirmation Preview** to the user in chat.
 > 4. Halt and await explicit user approval before running `npx tkt create ... --yes` or `npx tkt update ... --yes`.
+
+Native `ask` responses, staged tokens, successful dry runs, and automatically
+allowed tools are **not proof of human consent**. An unattended Copilot SDK
+probe continued after `ask`; always obtain explicit approval of the exact
+ticket change in chat. Unattended Copilot ticket writes are not supported.
 
 #### Pre-Hook Confirmation Format (Present in Chat):
 ```markdown
@@ -77,7 +83,7 @@ If no board profile is configured yet, follow [SETUP.md](../../SETUP.md):
 ### C. Mandatory Post-Hook Execution Rule (Direct Link + Connected Board Link)
 > [!NOTE]
 > **Always Surface Both Direct Ticket Link & Connected Board View Link**
-> Whenever a ticket is created or updated, the CLI post-hook outputs two links and records an entry in `.tkt/audit.jsonl`. Your response to the user **MUST** immediately display both clickable links:
+> Whenever a ticket is created or updated, the CLI post-hook outputs two links and records an entry in `.tktcraft/audit.jsonl`. Your response to the user **MUST** immediately display both clickable links:
 > 1. **Direct Ticket Link**:
 >    - Jira: `https://<org>.atlassian.net/browse/<KEY>`
 >    - Azure DevOps: `https://dev.azure.com/<org>/<project>/_workitems/edit/<ID>`

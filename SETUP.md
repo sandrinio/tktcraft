@@ -1,6 +1,10 @@
 # Connection & Board Setup Guide (For Humans & AI Agents)
 
-This guide walks both **Human users** and **AI Coding Agents** (Claude Code, Antigravity, Cursor, Codex) through connecting `tkt` to **Jira** (Cloud or Data Center) and/or **Azure DevOps Boards**, selecting the target **Board** during setup, and verifying Pre-Hooks and Post-Hooks.
+This guide walks both **Human users** and **AI Coding Agents** through connecting
+`tkt` to **Jira** (Cloud or Data Center) or **Azure DevOps Boards**, selecting the
+target **Board**, and verifying Pre-Hooks and Post-Hooks. Experimental Copilot
+integration is included in this unreleased candidate; live support is not yet
+certified. Use [ONBOARDING.md](ONBOARDING.md) as the short entry point.
 
 ---
 
@@ -10,16 +14,26 @@ This guide walks both **Human users** and **AI Coding Agents** (Claude Code, Ant
 > Follow Steps 1–5 in order. Run shell commands where possible, and pause to ask the user only when credentials or **Board Selection** are needed.
 
 ### Step 1: Verify Runtime Environment
-Ensure Node.js $\ge 20$ is installed and build the CLI:
+Ensure Node.js $\ge 20$ is installed, then install in the target workspace:
 ```bash
 node --version && npm --version
-npm install && npm run build
+npm install tktcraft
+npx --no-install tkt onboarding
 ```
 
-### Step 2: Check or Create `.env` Credentials
-1. Check if `.env` exists; if not, copy `.env.example`:
+The commands below use the source-checkout launcher for developers. With an
+installed package, use `npx --no-install tkt` instead of `node ./bin/tkt.js`.
+Do not require a consumer workspace to contain the package's source tree.
+
+### Step 2: Check or Create `.tktcraft/.env` Credentials
+1. Have the user provision credentials directly into an ignored `.tktcraft/.env` file.
+   Do not request tokens in chat or put them into command arguments. In a source
+   checkout, the template can be copied:
    ```bash
-   test -f .env || cp .env.example .env
+   printf '\n.tktcraft/\n' >> .gitignore
+   mkdir -p .tktcraft
+   test -f .tktcraft/.env || (umask 077; cp .env.example .tktcraft/.env)
+   chmod 600 .tktcraft/.env
    ```
 2. Ask the user which platform(s) they want to connect (**Jira**, **Azure DevOps**, or **Both**):
    - **If Jira Cloud**:
@@ -62,7 +76,7 @@ node ./bin/tkt.js setup \
 What this does automatically:
 - Introspects **Tier 1 (Formal Schema)**: Each board's **Columns $\leftrightarrow$ Workflow Statuses / States**, WIP limits, Column Definitions of Done, JQL/WIQL filter placement rules (`requiredLabels`, `routedIssueTypes`, or Team `AreaPath`/`IterationPath`), and required/custom fields.
 - Introspects **Tier 2 (Empirical Team Conventions)**: Samples recent tickets on each board to learn active issue type distribution, real label/tag vocabulary, `[Prefix]` title patterns, and description headings.
-- Saves all connected boards to `.tkt/config.json`, generates per-board AI guides at `.tkt/boards/<board-alias>.md`, and builds the master multi-board routing map at `.tkt/boards/INDEX.md`.
+- Saves all connected boards to `.tktcraft/config.json`, generates per-board AI guides at `.tktcraft/boards/<board-alias>.md`, and builds the master multi-board routing map at `.tktcraft/boards/INDEX.md`.
 
 ### Step 5: Verify Connection & Board Schema
 ```bash
@@ -72,32 +86,56 @@ node ./bin/tkt.js board-schema
 ```
 Confirm to the user that:
 - ✅ Authentication is active (`tkt me`).
-- ✅ Connected boards & auto-routing rules are synced (`.tkt/boards/INDEX.md` and `.tkt/boards/<board-alias>.md`).
-- ✅ AI Pre-Hooks and Post-Hooks are active (`.agents/hooks.json`).
+- ✅ Connected boards & auto-routing rules are synced (`.tktcraft/boards/INDEX.md` and `.tktcraft/boards/<board-alias>.md`).
+- Full workflow/templates and the launcher live in `.tktcraft/skills/` and
+  `.tktcraft/hooks/`. Small registration/discovery entries remain in
+  `.agents/hooks.json`, `.agents/skills/tkt-ops/SKILL.md`, and
+  `.github/hooks/tkt-governance.json`, plus a small instruction block. This does
+  **not** verify that the current assistant
+  has loaded or executed them. Start a new trusted session if needed, inspect
+  the agent's hook diagnostics, and verify a harmless read-only command.
+
+The launcher uses the installed package that ran setup, even in a different
+workspace or a path containing spaces. Keep that installation available and
+make sure `node` is on the agent's PATH. If it is moved or removed, reinstall
+`tktcraft` and rerun setup. Setup preserves unrelated hooks and reports
+customized governance or launcher conflicts for review rather than replacing
+them. Rerun setup to add integrations to an existing workspace, even when the
+skill already exists. Unmodified managed assets upgrade using a local hash
+manifest; customized skills are retained and listed. See the
+[compatibility evidence](COPILOT-COMPATIBILITY.md) for experimental Copilot
+behavior, activation checks, and unverified environments.
+In an unattended Copilot SDK probe, `ask` did not prevent an inert command from
+executing. Setup does not override native permission policy. A hook response,
+staged token, or successful preview is not human consent; never execute a ticket
+mutation without explicit approval of that exact change. Unattended Copilot
+ticket writes are not supported.
+
+Existing `.tkt/` state migrates automatically. If both state directories exist,
+reconcile them first; neither is silently overwritten. Existing root `.env`
+contents are never moved or edited: they remain a compatibility fallback, with
+`.tktcraft/.env` taking precedence. See [workspace layout](README.md#workspace-layout).
 
 ---
 
 ## Part B: For Humans (Interactive Terminal Quickstart)
 
-### 1. Install & Build
+### 1. Install
 ```bash
-npm install
-npm run build
-# Optional: link `tktcraft` and `tkt` globally on your machine
-npm link
+npm install tktcraft
 ```
 
 ### 2. Run the Interactive Setup Wizard
 Simply run:
 ```bash
-tkt setup
+npx --no-install tkt setup
 ```
 The interactive wizard will guide you step-by-step:
 1. **Select Provider Account**: `[1] Jira` or `[2] Azure DevOps` (one provider account per workspace)
-2. **Enter URL & Token**: Saved securely to `.env` (never committed to git)
+2. **Enter URL & Token**: Saved securely to `.tktcraft/.env` (never committed to git)
 3. **Select Project**: Pick from a numbered list of your accessible projects
 4. **Choose Your Board(s) (Required)**: Pick one or multiple comma-separated boards from the numbered list (e.g. `1` or `1,2`)
-5. **Automatic 3-Tier Board Introspection**: `tkt` inspects each board's columns, statuses, JQL/WIQL filters, work item fields, and recent ticket conventions, saving the connected boards to `.tkt/config.json` and `.tkt/boards/INDEX.md`.
+5. **Automatic 3-Tier Board Introspection**: `tkt` inspects each board's columns, statuses, JQL/WIQL filters, work item fields, and recent ticket conventions, saving the connected boards to `.tktcraft/config.json` and `.tktcraft/boards/INDEX.md`.
 
 > **Tip — Single-Account Multi-Board (`Jira + Jira` or `ADO + ADO`)**:
 > You can connect multiple boards from the same Jira account or the same Azure DevOps account!

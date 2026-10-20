@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ../bin/tkt.js hook pre-tool",
+            "command": "node .agents/tkt-hook.cjs pre-tool",
             "timeout": 15
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ../bin/tkt.js hook post-tool",
+            "command": "node .agents/tkt-hook.cjs post-tool",
             "timeout": 15
           }
         ]

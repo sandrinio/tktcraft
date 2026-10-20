@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { ensureWorkspaceHome, getWorkspacePath } from './paths.ts';
 import type {
   ConnectedBoardConfig,
   ProviderType,
@@ -19,8 +20,7 @@ export interface ResolvedCredentials {
 /**
  * Lightweight zero-dependency .env parser
  */
-export function loadDotEnv(workspaceDir: string = process.cwd()): Record<string, string> {
-  const envPath = join(workspaceDir, '.env');
+function readDotEnv(envPath: string): Record<string, string> {
   const values: Record<string, string> = {};
   if (!existsSync(envPath)) {
     return values;
@@ -44,11 +44,18 @@ export function loadDotEnv(workspaceDir: string = process.cwd()): Record<string,
   return values;
 }
 
+export function loadDotEnv(workspaceDir: string = process.cwd()): Record<string, string> {
+  return {
+    ...readDotEnv(join(workspaceDir, '.env')),
+    ...readDotEnv(getWorkspacePath(workspaceDir, '.env')),
+  };
+}
+
 export function upsertDotEnvValues(
   updates: Record<string, string>,
   workspaceDir: string = process.cwd()
 ): string {
-  const envPath = join(workspaceDir, '.env');
+  const envPath = join(ensureWorkspaceHome(workspaceDir), '.env');
   let lines: string[] = [];
   if (existsSync(envPath)) {
     lines = readFileSync(envPath, 'utf-8').split(/\r?\n/);
@@ -73,12 +80,13 @@ export function upsertDotEnvValues(
     }
   }
 
-  writeFileSync(envPath, newLines.join('\n').trimEnd() + '\n', 'utf-8');
+  writeFileSync(envPath, newLines.join('\n').trimEnd() + '\n', { encoding: 'utf-8', mode: 0o600 });
+  chmodSync(envPath, 0o600);
   return envPath;
 }
 
 export function getConfigPath(workspaceDir: string = process.cwd()): string {
-  return join(workspaceDir, '.tkt', 'config.json');
+  return getWorkspacePath(workspaceDir, 'config.json');
 }
 
 export function loadWorkspaceConfig(
@@ -100,13 +108,14 @@ export function saveWorkspaceConfig(
   workspaceDir: string = process.cwd()
 ): string {
   const cfgPath = getConfigPath(workspaceDir);
+  ensureWorkspaceHome(workspaceDir);
   mkdirSync(dirname(cfgPath), { recursive: true });
   writeFileSync(cfgPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
   return cfgPath;
 }
 
 /**
- * Adds or updates a connected board in `.tkt/config.json`.
+ * Adds or updates a connected board in `.tktcraft/config.json`.
  * Enforces the Single-Account Multi-Board rule: all boards in a workspace share the
  * same provider (`jira` OR `ado`) and account (`baseUrl`). If the workspace was previously
  * connected to a different provider, it resets cleanly to the new provider account.
@@ -146,14 +155,14 @@ export function upsertProfile(
 }
 
 /**
- * Generates `.tkt/boards/INDEX.md` — a master multi-board routing map showing all
+ * Generates `.tktcraft/boards/INDEX.md` — a master multi-board routing map showing all
  * connected boards in the same Jira or Azure DevOps account and how work routes between them.
  */
 export function generateMultiBoardIndexMarkdown(
   config: TktWorkspaceConfig,
   workspaceDir: string = process.cwd()
 ): string {
-  const boardsDir = join(workspaceDir, '.tkt', 'boards');
+  const boardsDir = join(ensureWorkspaceHome(workspaceDir), 'boards');
   mkdirSync(boardsDir, { recursive: true });
   const indexPath = join(boardsDir, 'INDEX.md');
   const profiles = Object.values(config.profiles);
@@ -198,14 +207,14 @@ ${rows}
 }
 
 /**
- * Writes a comprehensive 3-Tier `board.md` reference guide in `.tkt/boards/<profile>.md`
+ * Writes a comprehensive 3-Tier `board.md` reference guide in `.tktcraft/boards/<profile>.md`
  * combining Tier 1 (Formal API Schema) and Tier 2 (Empirical Team Ticket Conventions).
  */
 export function generateBoardContextMarkdown(
   profile: TktProfile,
   workspaceDir: string = process.cwd()
 ): string {
-  const boardsDir = join(workspaceDir, '.tkt', 'boards');
+  const boardsDir = join(ensureWorkspaceHome(workspaceDir), 'boards');
   mkdirSync(boardsDir, { recursive: true });
   const mdPath = join(boardsDir, `${profile.name}.md`);
   const b = profile.board;
@@ -404,7 +413,7 @@ export function resolveActiveProfile(
         .map((p) => `${p.name} (${p.board.name} #${p.board.id})`)
         .join(', ');
       throw new Error(
-        `Board or profile '${explicitSelector}' not found in .tkt/config.json. Connected boards: ${available}`
+        `Board or profile '${explicitSelector}' not found in .tktcraft/config.json. Connected boards: ${available}`
       );
     }
 
@@ -515,7 +524,7 @@ export function resolveActiveProfile(
 
 /**
  * Given a fetched ticket's metadata (`issueType`, `labels`, `areaPath`, `project`),
- * finds the best matching connected board in `.tkt/config.json` so that `tkt get` and
+ * finds the best matching connected board in `.tktcraft/config.json` so that `tkt get` and
  * `tkt update` always resolve the exact board column and board deep-link URL!
  */
 export function resolveMatchingBoardProfileForTicket(
@@ -649,17 +658,17 @@ export function resolveCredentials(
 
     if (!baseUrl) {
       throw new Error(
-        `Missing Jira URL. Set JIRA_URL in .env or run 'tkt setup' (see SETUP.md).`
+        `Missing Jira URL. Set JIRA_URL in .tktcraft/.env or run 'tkt setup' (see SETUP.md).`
       );
     }
     if (!token) {
       throw new Error(
-        `Missing Jira API token. Set JIRA_TOKEN in .env or run 'tkt setup' (see SETUP.md).`
+        `Missing Jira API token. Set JIRA_TOKEN in .tktcraft/.env or run 'tkt setup' (see SETUP.md).`
       );
     }
     if (authType === 'cloud' && !user) {
       throw new Error(
-        `Missing Jira user email for Jira Cloud Basic Auth. Set JIRA_USER in .env or run 'tkt setup'.`
+        `Missing Jira user email for Jira Cloud Basic Auth. Set JIRA_USER in .tktcraft/.env or run 'tkt setup'.`
       );
     }
 
@@ -711,12 +720,12 @@ export function resolveCredentials(
 
   if (!baseUrl) {
     throw new Error(
-      `Missing Azure DevOps Organization URL. Set ADO_ORG_URL (e.g. https://dev.azure.com/your-org) in .env or run 'tkt setup'.`
+      `Missing Azure DevOps Organization URL. Set ADO_ORG_URL (e.g. https://dev.azure.com/your-org) in .tktcraft/.env or run 'tkt setup'.`
     );
   }
   if (!token) {
     throw new Error(
-      `Missing Azure DevOps PAT token. Set ADO_TOKEN in .env or run 'tkt setup' (see SETUP.md).`
+      `Missing Azure DevOps PAT token. Set ADO_TOKEN in .tktcraft/.env or run 'tkt setup' (see SETUP.md).`
     );
   }
 

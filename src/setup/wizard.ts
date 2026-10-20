@@ -1,7 +1,6 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { fileURLToPath } from 'node:url';
+import { scaffoldWorkspaceAgentHarness } from './agent-integration.ts';
+export { scaffoldWorkspaceAgentHarness } from './agent-integration.ts';
 import {
   generateBoardContextMarkdown,
   generateMultiBoardIndexMarkdown,
@@ -19,10 +18,6 @@ import type {
   ProviderType,
   TktProfile,
 } from '../types.ts';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const PACKAGE_ROOT = resolve(__dirname, '..', '..');
 
 export interface SetupWizardOptions {
   provider?: ProviderType;
@@ -59,39 +54,6 @@ function slugifyBoardAlias(
     return `${explicitProfile}-${cleanName || board.id}`;
   }
   return cleanName || `${project.toLowerCase()}-board-${board.id || index + 1}`;
-}
-
-/**
- * Ensures `.env` is listed in `.gitignore` and scaffolds `.agents/` (skill + hooks)
- * into a fresh workspace if not already present.
- */
-export function scaffoldWorkspaceAgentHarness(workspaceDir: string = process.cwd()): void {
-  // 1. Ensure .gitignore protects .env
-  const gitignorePath = join(workspaceDir, '.gitignore');
-  if (existsSync(gitignorePath)) {
-    const content = readFileSync(gitignorePath, 'utf-8');
-    if (!content.split(/\r?\n/).some((line) => line.trim() === '.env')) {
-      writeFileSync(
-        gitignorePath,
-        content.replace(/\s*$/, '\n.env\n'),
-        'utf-8'
-      );
-    }
-  } else {
-    writeFileSync(gitignorePath, '.env\nnode_modules/\n', 'utf-8');
-  }
-
-  // 2. Copy .agents/skills/tkt-ops and .agents/hooks.json if running in an external workspace
-  const targetAgentsDir = join(workspaceDir, '.agents');
-  const sourceAgentsDir = join(PACKAGE_ROOT, '.agents');
-  if (
-    resolve(workspaceDir) !== resolve(PACKAGE_ROOT) &&
-    existsSync(sourceAgentsDir) &&
-    !existsSync(join(targetAgentsDir, 'skills', 'tkt-ops', 'SKILL.md'))
-  ) {
-    mkdirSync(targetAgentsDir, { recursive: true });
-    cpSync(sourceAgentsDir, targetAgentsDir, { recursive: true, force: false });
-  }
 }
 
 function createTempProvider(
@@ -218,11 +180,11 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
       token =
         token ||
         (await ask(
-          `5. Jira API Token ${existingToken ? '(Press Enter to keep existing token in .env)' : ''}`,
+          `5. Jira API Token ${existingToken ? '(Press Enter to keep existing token in .tktcraft/.env)' : ''}`,
           existingToken
         ));
 
-      // Save whatever partial or complete credentials were provided to .env immediately
+      // Save whatever partial or complete credentials were provided to .tktcraft/.env immediately
       const envToSave: Record<string, string> = { JIRA_AUTH_TYPE: authType };
       if (baseUrl) envToSave.JIRA_URL = baseUrl;
       if (user) envToSave.JIRA_USER = user;
@@ -279,7 +241,7 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
       token =
         token ||
         (await ask(
-          `4. Azure DevOps Personal Access Token (PAT) ${existingToken ? '(Press Enter to keep existing token in .env)' : ''}`,
+          `4. Azure DevOps Personal Access Token (PAT) ${existingToken ? '(Press Enter to keep existing token in .tktcraft/.env)' : ''}`,
           existingToken
         ));
 
@@ -492,13 +454,12 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
       contextMdPaths.push(contextMdPath);
     }
 
-    // Scaffold .agents/ harness & .gitignore in fresh workspaces
-    scaffoldWorkspaceAgentHarness(workspaceDir);
+    const agentIntegration = scaffoldWorkspaceAgentHarness(workspaceDir);
 
     const updatedCfg = loadWorkspaceConfig(workspaceDir);
     const indexMdPath = updatedCfg
       ? generateMultiBoardIndexMarkdown(updatedCfg, workspaceDir)
-      : '.tkt/boards/INDEX.md';
+      : '.tktcraft/boards/INDEX.md';
 
     const primaryProfile = createdProfiles[0];
 
@@ -533,10 +494,11 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
               requiredLabels: p.board.placement.requiredLabels,
               defaultAreaPath: p.board.placement.defaultAreaPath,
             })),
-            configPath: '.tkt/config.json',
+            configPath: '.tktcraft/config.json',
             boardContextMarkdown: contextMdPaths[0],
             boardContextMarkdowns: contextMdPaths,
             multiBoardIndexMarkdown: indexMdPath,
+            agentIntegration,
           },
           null,
           2
@@ -547,7 +509,7 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
       console.log(`  • Account:             ${provider.toUpperCase()} (${baseUrl})`);
       console.log(`  • Connected Boards:    ${createdProfiles.length} in this run (${Object.keys(updatedCfg?.profiles ?? {}).length} total in workspace)`);
       for (const p of createdProfiles) {
-        console.log(`    - [${p.name}] ${p.board.name} (ID: ${p.board.id}) -> .tkt/boards/${p.name}.md`);
+        console.log(`    - [${p.name}] ${p.board.name} (ID: ${p.board.id}) -> .tktcraft/boards/${p.name}.md`);
         console.log(`      Columns: ${p.board.columns.map((c) => c.columnName).join(' -> ')}`);
         if (p.board.placement.requiredLabels?.length) {
           console.log(`      Auto Labels: ${p.board.placement.requiredLabels.join(', ')}`);
@@ -559,7 +521,14 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
           console.log(`      Default Area Path: ${p.board.placement.defaultAreaPath}`);
         }
       }
-      console.log(`  • Multi-Board Index:   .tkt/boards/INDEX.md`);
+      console.log(`  • Multi-Board Index:   .tktcraft/boards/INDEX.md`);
+      console.log('  • Agent integration:  files installed (Copilot integration is experimental).');
+      console.log(`  • Instructions:       ${agentIntegration.instructionsPath}`);
+      for (const path of agentIntegration.preservedFiles) {
+        console.log(`  • Preserved custom skill file: ${path}`);
+      }
+      console.log('    Not verified active: start a new trusted assistant session, inspect /hooks and skill discovery.');
+      console.log('    A hook permission prompt does not replace the structured preview and your explicit approval.');
       console.log('='.repeat(76));
     }
 
