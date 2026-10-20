@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -10,7 +10,8 @@ const distCli = join(__dirname, '..', 'dist', 'cli.js');
 const srcCli = join(__dirname, '..', 'src', 'cli.ts');
 
 if (existsSync(distCli)) {
-  await import(distCli);
+  // ESM import() rejects bare Windows paths (C:\...), so pass a file:// URL.
+  await import(pathToFileURL(distCli).href);
 } else if (existsSync(srcCli)) {
   const res = spawnSync(
     process.execPath,

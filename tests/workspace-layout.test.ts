@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,7 +30,14 @@ describe('Canonical .tktcraft workspace layout', () => {
       assert.deepEqual(loadWorkspaceConfig(workspace), config);
       assert.equal(existsSync(join(workspace, '.tktcraft/pending-approval.json')), true);
       assert.match(readFileSync(join(workspace, '.gitignore'), 'utf-8'), /^\.tktcraft\/$/m);
-      assert.equal(statSync(envPath).mode & 0o777, 0o600);
+      if (process.platform === 'win32') {
+        // One explicit full-control entry (the current user) and nothing inherited.
+        const acl = spawnSync('icacls', [envPath], { encoding: 'utf-8' }).stdout;
+        assert.equal(acl.match(/:\(/g)?.length, 1, acl);
+        assert.match(acl, /:\(F\)/, acl);
+      } else {
+        assert.equal(statSync(envPath).mode & 0o777, 0o600);
+      }
       assert.equal(existsSync(join(workspace, '.env')), false);
       assert.equal(existsSync(join(workspace, '.tkt')), false);
     });

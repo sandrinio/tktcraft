@@ -14,10 +14,17 @@ function run(command: string, args: string[], cwd: string, input?: string): stri
   return result.stdout;
 }
 
+// On Windows `npm` is a .cmd shim that spawnSync cannot start without a shell, so run npm's
+// JavaScript entry point with the current Node instead.
+const npmCli = [process.env.npm_execpath, join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+  .find((path) => path && /npm-cli\.c?js$/.test(path) && existsSync(path));
+const npm = (args: string[], cwd: string): string =>
+  npmCli ? run(process.execPath, [npmCli, ...args], cwd) : run('npm', args, cwd);
+
 it('installs the candidate npm archive and runs both registered hook contracts in an unrelated workspace', () => {
   const temporary = mkdtempSync(join(tmpdir(), 'tkt packaged integration '));
   try {
-    const [packed] = JSON.parse(run('npm', [
+    const [packed] = JSON.parse(npm([
       'pack', '--ignore-scripts', '--json', '--pack-destination', temporary,
     ], root));
     const files: string[] = packed.files.map((file: { path: string }) => file.path);
@@ -36,7 +43,7 @@ it('installs the candidate npm archive and runs both registered hook contracts i
       name: 'tkt-package-test', private: true, type: 'module',
       dependencies: { 'undici-types': pathToFileURL(join(root, 'node_modules/undici-types')).href },
     }));
-    run('npm', [
+    npm([
       'install', '--offline', '--ignore-scripts', '--omit=dev', '--no-audit', '--no-fund',
       '--package-lock=false', join(temporary, packed.filename),
     ], workspace);

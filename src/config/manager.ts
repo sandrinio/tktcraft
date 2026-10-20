@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensureWorkspaceHome, getWorkspacePath } from './paths.ts';
@@ -51,6 +52,21 @@ export function loadDotEnv(workspaceDir: string = process.cwd()): Record<string,
   };
 }
 
+/**
+ * Windows ignores POSIX modes, so replace the inherited ACL with a single full-control
+ * entry for the current user: the equivalent of 0600.
+ */
+function restrictToCurrentUser(path: string): void {
+  const run = (command: string, args: string[]) =>
+    spawnSync(command, args, { encoding: 'utf-8', windowsHide: true });
+  const sid = run('whoami', ['/user', '/fo', 'csv', '/nh']).stdout?.match(/S-1-[\d-]+/)?.[0];
+  // Drop inherited entries only once the user's own entry exists, so the file stays readable.
+  const granted = sid !== undefined && run('icacls', [path, '/grant:r', `*${sid}:(F)`]).status === 0;
+  if (!granted || run('icacls', [path, '/inheritance:r']).status !== 0) {
+    console.error(`Warning: could not restrict ${path} to the current user. Check its permissions with icacls.`);
+  }
+}
+
 export function upsertDotEnvValues(
   updates: Record<string, string>,
   workspaceDir: string = process.cwd()
@@ -82,6 +98,7 @@ export function upsertDotEnvValues(
 
   writeFileSync(envPath, newLines.join('\n').trimEnd() + '\n', { encoding: 'utf-8', mode: 0o600 });
   chmodSync(envPath, 0o600);
+  if (process.platform === 'win32') restrictToCurrentUser(envPath);
   return envPath;
 }
 

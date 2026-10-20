@@ -22,52 +22,66 @@ export function isTrackerCommand(command: string): boolean {
   return /\b(tktcraft|tkt|jira_tool|jira|az\s+boards)\b|bin\/tkt\.js|src\/cli\.ts/i.test(command);
 }
 
+// A preview is only recognized when bash, PowerShell and cmd.exe would all pass the same plain
+// --dry-run token; otherwise the shell that actually runs the command could execute a write.
+// Expansion, escapes and operators of any of those shells (including cmd.exe's inside quotes,
+// PowerShell's typographic quotes, and whitespace that only PowerShell splits on):
+const SHELL_SENSITIVE = /[$`%^&|<>‘-„]|[^\S \t]/;
+// Comments, grouping, script blocks and splatting, when unquoted:
+const UNQUOTED_OPERATORS = /[;(){}#@]/;
+// A backslash before these is a literal Windows path separator in every shell; before quotes,
+// whitespace or another backslash the shells disagree about where arguments end.
+const PATH_CHARACTER = /[A-Za-z0-9._-]/;
+
 export function isTrackerPreview(command: string): boolean {
-  if (/[$`\r\n]/.test(command)) return false;
+  if (SHELL_SENSITIVE.test(command)) return false;
   const tokens: Array<{ value: string; plain: boolean }> = [];
   let value = '';
   let quote = '';
-  let escaped = false;
   let plain = true;
   const finish = (): void => {
     if (value) tokens.push({ value, plain });
     value = '';
     plain = true;
   };
-  for (const char of command) {
-    if (escaped) {
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    if (char === '\\') {
+      if (!PATH_CHARACTER.test(command[index + 1] ?? '')) return false;
       value += char;
-      escaped = false;
-    } else if (char === '\\' && quote !== "'") {
-      escaped = true;
       plain = false;
     } else if (quote) {
+      // A literal double quote (PowerShell's "" escape, or " inside '...') is re-parsed by
+      // Windows programs as a quote boundary.
+      if (char === '"' && (quote === "'" || command[index + 1] === '"')) return false;
       if (char === quote) quote = '';
       else value += char;
     } else if (char === "'" || char === '"') {
       quote = char;
       plain = false;
-    } else if (/[;&|<>()]/.test(char)) {
+    } else if (UNQUOTED_OPERATORS.test(char)) {
       return false;
-    } else if (/\s/.test(char)) {
+    } else if (char === ' ' || char === '\t') {
       finish();
     } else {
       value += char;
     }
   }
-  if (quote || escaped) return false;
+  if (quote) return false;
   finish();
-  const executable = tokens[0]?.value.split('/').at(-1);
+  // `--dry-run=` (empty) after `--dry-run` turns the preview back off in the CLI flag parser.
+  if (tokens.some((token) => token.value.startsWith('--dry-run='))) return false;
+  const name = (token?: { value: string }): string => token?.value.split(/[\\/]/).at(-1)?.toLowerCase() ?? '';
   let trackerIndex = 0;
-  if (executable === 'npx' || executable === 'npx.cmd') {
+  if (/^npx(?:\.cmd|\.ps1)?$/.test(name(tokens[0]))) {
     trackerIndex = tokens[1]?.value === '--no-install' ? 2 : 1;
-  } else if (executable === 'node' || executable === 'node.exe') {
+  } else if (/^node(?:\.exe)?$/.test(name(tokens[0]))) {
     trackerIndex = 1;
     while (['--no-warnings', '--experimental-strip-types'].includes(tokens[trackerIndex]?.value)) trackerIndex++;
-    if (!/(?:^|\/)(?:bin\/tkt\.js|src\/cli\.ts)$/.test(tokens[trackerIndex]?.value ?? '')) return false;
+    if (!/(?:^|[\\/])(?:bin[\\/]tkt\.js|src[\\/]cli\.ts)$/i.test(tokens[trackerIndex]?.value ?? '')) return false;
     return tokens.slice(trackerIndex + 1).some((token) => token.plain && token.value === '--dry-run');
   }
-  if (!/(?:^|\/)(tkt|tktcraft)(?:\.cmd)?$/.test(tokens[trackerIndex]?.value ?? '')) return false;
+  if (!/^(?:tkt|tktcraft)(?:\.cmd|\.ps1)?$/.test(name(tokens[trackerIndex]))) return false;
   return tokens.slice(trackerIndex + 1).some((token) => token.plain && token.value === '--dry-run');
 }
 
@@ -125,7 +139,7 @@ export function evaluatePreToolUsePayload(
   if (
     !commandLine ||
     (toolName &&
-      !['run_command', 'bash', 'execute_command', 'shell'].includes(toolName))
+      !['run_command', 'bash', 'powershell', 'execute_command', 'shell'].includes(toolName))
   ) {
     return { decision: 'allow' };
   }

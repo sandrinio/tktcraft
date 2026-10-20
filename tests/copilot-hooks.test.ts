@@ -62,6 +62,10 @@ describe('Copilot hook contracts (synthetic commands, documented and observed en
           'tkt search --board-only', 'tkt board-schema', 'npm test', 'tkt create --summary Test --dry-run',
           'npx --no-install tkt create --summary "A title" --dry-run',
           'node "./bin/tkt.js" create --summary "A title" --dry-run',
+          'tkt.cmd create --dry-run', 'tkt.ps1 create --dry-run', 'npx.cmd --no-install tkt create --dry-run',
+          'node .\\bin\\tkt.js create --summary "A title" --dry-run',
+          'C:\\Users\\dev\\AppData\\Roaming\\npm\\tkt.cmd create --dry-run',
+          '"C:\\Program Files\\nodejs\\node.exe" C:\\work\\repo\\bin\\tkt.js create --dry-run',
         ]) {
           assert.deepEqual(evaluateCopilotHook(payload(harness, 'pre', command, workspace), 'pre-tool'), {});
         }
@@ -103,6 +107,22 @@ describe('Copilot hook contracts (synthetic commands, documented and observed en
           'tkt update TEST-1 --summary foo\\ --dry-run --yes',
           'tkt update TEST-1 --DRY-RUN --yes',
           "sh -c 'tkt update TEST-1 --yes' --dry-run",
+          // The CLI parses a trailing empty `--dry-run=` as turning the preview off.
+          'tkt update TEST-1 --yes --dry-run --dry-run=',
+          // Each of these hides --dry-run from bash, PowerShell or cmd.exe.
+          'tkt update TEST-1 --yes # --dry-run',
+          'tkt update TEST-1 --yes { --dry-run }',
+          'tkt update TEST-1 --yes @extra --dry-run',
+          'tkt update TEST-1 --yes \u201C --dry-run \u201D',
+          'tkt update TEST-1 --yes --summary\u00A0--dry-run',
+          'tkt update TEST-1 --yes \\" --dry-run \\"',
+          'tkt update TEST-1 --yes "a\\" b" --dry-run "c\\" d"',
+          'tkt update TEST-1 --yes "a""b" --dry-run',
+          "tkt update TEST-1 --yes '\"' --dry-run '\"'",
+          "tkt update TEST-1 --yes --summary 'C:\\my dir\\' --dry-run",
+          'tkt create --dry-run "x&tkt update TEST-1 --yes"',
+          'tkt create --dry-run ^"x & tkt update TEST-1 --yes & "',
+          'tkt create --dry-run %EXTRA%',
         ]) {
           const output = evaluateCopilotHook(payload(harness, 'pre', command, workspace), 'pre-tool');
           const decision = harness === 'local' ? output.hookSpecificOutput : output;
@@ -190,6 +210,7 @@ describe('Copilot hook contracts (synthetic commands, documented and observed en
   it('retains the legacy decision envelope and permissive legacy malformed-input contract', () => {
     assert.deepEqual(evaluatePreToolUsePayload('{bad'), { decision: 'allow' });
     assert.equal(evaluatePreToolUsePayload('{"toolCall":{"name":"run_command","args":{"CommandLine":"tkt delete TEST-1"}}}').decision, 'deny');
+    assert.equal(evaluatePreToolUsePayload('{"toolCall":{"name":"PowerShell","args":{"command":"tkt delete TEST-1"}}}').decision, 'deny');
   });
 
   it('serializes native JSON and exits 2 on malformed input at the executable boundary', () => {

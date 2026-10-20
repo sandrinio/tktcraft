@@ -30,7 +30,7 @@ Unattended Copilot ticket writes are not supported.
 
 ```text
 .tktcraft/
-  .env                     # Credentials (mode 0600)
+  .env                     # Credentials (mode 0600; owner-only ACL on Windows)
   config.json              # Connected account, boards and governance
   boards/                  # Board guides and routing index
   hooks/tkt-hook.cjs        # Installed-package launcher
@@ -99,6 +99,18 @@ Every write still needs a structured preview and explicit approval.
 For source development, use `npm install && npm run build`; the source checkout
 remains supported. These candidate integration changes are not published yet.
 
+### Windows
+
+The same commands work in PowerShell, cmd.exe and Git Bash; npm installs `tkt.cmd`
+and `tkt.ps1` shims, and CI runs the test suite on Windows. Differences:
+
+- `.tktcraft/.env` is restricted with an ACL granting only your account, in place of mode 0600.
+- Custom `preHooks`/`postHooks` commands run through `cmd.exe`. Use `node ./script.js`
+  rather than shell syntax for hooks that must work on every OS.
+- The agent hook treats a command as a preview only when bash, PowerShell and cmd.exe
+  would all pass it a plain `--dry-run`. Dry-runs that use variables, `&`, `%`, `^`,
+  comments, or `\` outside a path still ask for permission.
+
 ---
 
 ## Architecture & Hook Pipeline
@@ -162,3 +174,6 @@ In addition to the built-in Pre-Hooks and Post-Hooks, any board profile in `.tkt
   }
 }
 ```
+
+Hook commands run through the platform shell (`/bin/sh`, or `cmd.exe` on Windows),
+so the `echo` example above is POSIX-only; a `node` script is portable.
