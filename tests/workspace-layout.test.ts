@@ -21,6 +21,11 @@ function workspaceTest(run: (workspace: string) => void): void {
 describe('Canonical .tktcraft workspace layout', () => {
   it('writes credentials, config and approval state only inside the canonical home', () => {
     workspaceTest(workspace => {
+      if (process.platform === 'win32') {
+        // Share the workspace with all local users, as an inheritable folder grant would.
+        const shared = spawnSync('icacls', [workspace, '/grant', '*S-1-5-32-545:(OI)(CI)(RX)'], { encoding: 'utf-8' });
+        assert.equal(shared.status, 0, shared.stdout + shared.stderr);
+      }
       const envPath = upsertDotEnvValues({ JIRA_TOKEN: 'synthetic-token' }, workspace);
       const config = { version: 1 as const, defaultProfile: 'none', profiles: {} };
       saveWorkspaceConfig(config, workspace);
@@ -31,10 +36,10 @@ describe('Canonical .tktcraft workspace layout', () => {
       assert.equal(existsSync(join(workspace, '.tktcraft/pending-approval.json')), true);
       assert.match(readFileSync(join(workspace, '.gitignore'), 'utf-8'), /^\.tktcraft\/$/m);
       if (process.platform === 'win32') {
-        // One explicit full-control entry (the current user) and nothing inherited.
+        // Nothing inherited (so not the shared Users grant), and full control for the user.
         const acl = spawnSync('icacls', [envPath], { encoding: 'utf-8' }).stdout;
-        assert.equal(acl.match(/:\(/g)?.length, 1, acl);
-        assert.match(acl, /:\(F\)/, acl);
+        assert.doesNotMatch(acl, /\(I\)|BUILTIN\\Users/i, acl);
+        assert.ok(acl.toLowerCase().includes(`\\${process.env.USERNAME?.toLowerCase()}:(f)`), acl);
       } else {
         assert.equal(statSync(envPath).mode & 0o777, 0o600);
       }

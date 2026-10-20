@@ -40,10 +40,9 @@ Do not require a consumer workspace to contain the package's source tree.
    Add-Content .gitignore "`n.tktcraft/"
    New-Item -ItemType Directory -Force .tktcraft | Out-Null
    if (-not (Test-Path .tktcraft\.env)) { Copy-Item .env.example .tktcraft\.env }
-   $acl = Get-Acl -LiteralPath .tktcraft\.env
-   $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-   $acl.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;$sid)", 'Access')
-   Set-Acl -LiteralPath .tktcraft\.env -AclObject $acl
+   $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+   icacls .tktcraft\.env /grant:r "*${me}:(F)"
+   icacls .tktcraft\.env /inheritance:r
    ```
 2. Ask the user which platform(s) they want to connect (**Jira**, **Azure DevOps**, or **Both**):
    - **If Jira Cloud**:

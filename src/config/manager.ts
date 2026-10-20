@@ -53,28 +53,18 @@ export function loadDotEnv(workspaceDir: string = process.cwd()): Record<string,
 }
 
 /**
- * Windows ignores POSIX modes. Replace the whole DACL (inherited entries, and the explicit
- * ones Windows copies from the process token when the folder has nothing to inherit) with a
- * single full-control entry for the current user: the equivalent of 0600.
+ * Windows ignores POSIX modes. Grant the current user full control and drop everything
+ * inherited from the folder (shared Users/Authenticated Users access), the equivalent of 0600.
+ * Explicit SYSTEM/Administrators entries Windows may add stay, as root keeps access on Unix.
  */
-const RESTRICT_TO_CURRENT_USER = [
-  "$ErrorActionPreference = 'Stop'",
-  '$acl = Get-Acl -LiteralPath $env:TKT_RESTRICT_PATH',
-  '$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
-  `$acl.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;$sid)", 'Access')`,
-  'Set-Acl -LiteralPath $env:TKT_RESTRICT_PATH -AclObject $acl',
-].join('\n');
-
 function restrictToCurrentUser(path: string): void {
-  const encoded = Buffer.from(RESTRICT_TO_CURRENT_USER, 'utf16le').toString('base64');
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
-    encoding: 'utf-8',
-    windowsHide: true,
-    env: { ...process.env, TKT_RESTRICT_PATH: path },
-  });
-  if (result.status !== 0) {
-    const detail = (result.stderr || result.error?.message || '').trim();
-    console.error(`Warning: could not restrict ${path} to the current user${detail ? ` (${detail})` : ''}. Check its permissions with icacls.`);
+  const run = (command: string, args: string[]) =>
+    spawnSync(command, args, { encoding: 'utf-8', windowsHide: true });
+  const sid = run('whoami', ['/user', '/fo', 'csv', '/nh']).stdout?.match(/S-1-[\d-]+/)?.[0];
+  // Drop inherited entries only once the user's own entry exists, so the file stays readable.
+  const granted = sid !== undefined && run('icacls', [path, '/grant:r', `*${sid}:(F)`]).status === 0;
+  if (!granted || run('icacls', [path, '/inheritance:r']).status !== 0) {
+    console.error(`Warning: could not restrict ${path} to the current user. Check its permissions with icacls.`);
   }
 }
 
