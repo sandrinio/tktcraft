@@ -264,6 +264,15 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
           existingUrl
         ))
       ).replace(/\/+$/, '');
+
+      // Normalize if user provided https://dev.azure.com/{org}/{project}
+      const adoOrgMatch = baseUrl.match(/^(https?:\/\/dev\.azure\.com\/[^/]+)\/([^/]+)$/i);
+      if (adoOrgMatch) {
+        baseUrl = adoOrgMatch[1];
+        if (!options.project) {
+          options.project = decodeURIComponent(adoOrgMatch[2]);
+        }
+      }
       user =
         user ||
         (await ask('3. Azure DevOps User Email (optional, for display)', existingUser));

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
-.tkt/audit.jsonl
+.tkt/
+.agents/.tkt/
 .DS_Store
 *.log

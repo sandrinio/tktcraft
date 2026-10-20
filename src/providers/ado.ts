@@ -260,6 +260,7 @@ export class AdoProvider implements TrackerProvider {
         `/${projEnc}/_apis/wit/workitemtypes?api-version=7.1`
       );
       for (const wit of witRes.value ?? []) {
+        if (wit.isDisabled) continue;
         const witName = String(wit.name);
         if (/test|shared|code review|feedback/i.test(witName)) continue;
 
@@ -595,7 +596,23 @@ export class AdoProvider implements TrackerProvider {
   async createTicket(input: CreateTicketInput): Promise<UnifiedTicket> {
     const project = input.project || this.profile.project;
     const projEnc = encodeURIComponent(project);
-    const witEnc = encodeURIComponent(`$${input.issueType.trim()}`);
+
+    let targetType = input.issueType.trim();
+    const availableTypes = this.profile.board.issueTypes;
+    const exactMatch = availableTypes.find(
+      (it) => it.name.toLowerCase() === targetType.toLowerCase()
+    );
+    if (exactMatch) {
+      targetType = exactMatch.name;
+    } else if (['story', 'user story', 'userstory'].includes(targetType.toLowerCase())) {
+      const pbi = availableTypes.find((it) => /^(pbi|product backlog item)$/i.test(it.name));
+      if (pbi) targetType = pbi.name;
+    } else if (['pbi', 'product backlog item'].includes(targetType.toLowerCase())) {
+      const story = availableTypes.find((it) => /^(user story|story)$/i.test(it.name));
+      if (story) targetType = story.name;
+    }
+
+    const witEnc = encodeURIComponent(`$${targetType}`);
 
     const split = splitMarkdownForAdoBoard({
       issueType: input.issueType,
