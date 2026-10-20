@@ -7,13 +7,40 @@
  *   - `tkt hook post-tool` (reads toolCall + toolOutput JSON from stdin)
  */
 
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { resolveActiveProfile } from '../config/manager.ts';
 
 export interface AgentHookDecision {
   decision: 'allow' | 'deny' | 'force_ask';
   reason?: string;
   postHookMessage?: string;
+}
+
+export function stagePreHookApprovalToken(
+  workspaceDir: string,
+  source: 'pre-tool-hook' | 'cli-preview',
+  summary: string
+): void {
+  try {
+    const tokenPath = join(workspaceDir, '.tkt', 'pending-approval.json');
+    mkdirSync(dirname(tokenPath), { recursive: true });
+    writeFileSync(
+      tokenPath,
+      JSON.stringify(
+        {
+          stagedAt: Date.now(),
+          source,
+          summary,
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+  } catch {
+    // non-fatal if directory is read-only
+  }
 }
 
 export function evaluatePreToolUsePayload(
@@ -39,6 +66,7 @@ export function evaluatePreToolUsePayload(
   const commandLine = String(
     args.CommandLine || args.command || args.cmd || ''
   ).trim();
+  const effectiveCwd = String(args.Cwd || args.cwd || workspaceDir);
 
   if (
     !commandLine ||
@@ -50,9 +78,9 @@ export function evaluatePreToolUsePayload(
 
   const cmdLower = commandLine.toLowerCase();
 
-  // Detect if command targets `tkt`, `jira`, or `az boards`
+  // Detect if command targets `tktcraft`, `tkt`, `jira`, or `az boards`
   const isTrackerCmd =
-    /\b(tkt|jira_tool|jira|az\s+boards)\b/.test(cmdLower) ||
+    /\b(tktcraft|tkt|jira_tool|jira|az\s+boards)\b/.test(cmdLower) ||
     cmdLower.includes('bin/tkt.js') ||
     cmdLower.includes('src/cli.ts');
 
@@ -73,31 +101,35 @@ export function evaluatePreToolUsePayload(
     };
   }
 
-  // Allow dry-run previews without interrupting the user
+  // Allow dry-run previews without interrupting the user, and stage approval token
   if (cmdLower.includes('--dry-run')) {
+    stagePreHookApprovalToken(effectiveCwd, 'cli-preview', commandLine);
     return { decision: 'allow' };
   }
 
-  // 2. PRE-HOOK CONFIRMATION: Any create or update mutation
+  // 2. PRE-HOOK PERMISSION GATE: Any create or update mutation
   const isCreate = /\b(create|new-ticket|add-ticket)\b/.test(cmdLower);
   const isUpdate = /\b(update|edit|transition|comment)\b/.test(cmdLower);
 
   if (isCreate || isUpdate) {
     let boardSummary = 'Connected Board';
     try {
-      const profile = resolveActiveProfile({ workspaceDir });
+      const profile = resolveActiveProfile({ workspaceDir: effectiveCwd });
       boardSummary = `${profile.board.name} (${profile.provider.toUpperCase()} / ${profile.project})`;
     } catch {
       // ignore if profile not yet configured
     }
 
+    // Record that PreToolUse asked permission so the CLI execution once approved can proceed
+    stagePreHookApprovalToken(effectiveCwd, 'pre-tool-hook', commandLine);
+
     const actionLabel = isCreate ? 'Ticket Creation' : 'Ticket Update';
     return {
       decision: 'force_ask',
       reason: [
-        `[tkt Pre-Hook Confirmation] ${actionLabel} requested on ${boardSummary}.`,
+        `[tkt Pre-Hook Permission] ${actionLabel} requested on ${boardSummary}.`,
         `Proposed Command: ${commandLine}`,
-        `Please confirm to execute this change in Jira / Azure DevOps.`,
+        `Please grant permission to execute this change in Jira / Azure DevOps.`,
       ].join('\n'),
     };
   }
@@ -130,7 +162,7 @@ export function evaluatePostToolUsePayload(rawInput: string): AgentHookDecision 
       decision: 'allow',
       postHookMessage: [
         `[tkt Post-Hook Reminder] Mandatory Post-Hook Output Rule:`,
-        `Include both clickable links in your response to the user:`,
+        `Include brief metadata of what was done and both clickable links in your response to the user:`,
         directMatch ? `1. Direct Ticket Link: ${directMatch[1]}` : '',
         boardMatch ? `2. Connected Board View Link: ${boardMatch[1]}` : '',
       ]

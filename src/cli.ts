@@ -673,15 +673,11 @@ async function main(): Promise<void> {
     // 2. Execute Ticket Creation
     const createdTicket = await provider.createTicket(createInput);
 
-    // 3. Run Post-Hooks (Direct Link + Board View Link verification, Audit Log, Custom Post-Hooks)
-    const postRes = runPostHooks(profile, 'create', createdTicket);
+    // 3. Run Post-Hooks (Brief Metadata Summary, Direct + Board View Links, Audit Log, Custom Post-Hooks)
+    const postRes = runPostHooks(profile, 'create', createdTicket, process.cwd(), createInput);
 
     if (format === 'human') {
-      console.log(`\n✓ Ticket created successfully on board '${profile.board.name}' (Profile: ${profile.name})!`);
-      console.log(`  Ticket Key:   ${createdTicket.key}`);
-      console.log(`  Board Column: ${createdTicket.boardColumn ?? createdTicket.status} (Status: ${createdTicket.status})`);
-      console.log(`  Direct Link:  ${createdTicket.directUrl}`);
-      console.log(`  Board Link:   ${createdTicket.boardViewUrl}`);
+      console.log('\n' + postRes.metadataText);
     } else {
       console.log(
         renderTicketOutput(createdTicket, profile, format, {
@@ -764,14 +760,11 @@ async function main(): Promise<void> {
     const provider = getProviderInstance(profile);
     const updatedTicket = await provider.updateTicket(updateInput);
 
-    // 3. Run Post-Hooks
-    const postRes = runPostHooks(profile, 'update', updatedTicket);
+    // 3. Run Post-Hooks (Brief Metadata Summary, Direct + Board View Links, Audit Log, Custom Post-Hooks)
+    const postRes = runPostHooks(profile, 'update', updatedTicket, process.cwd(), updateInput);
 
     if (format === 'human') {
-      console.log(`\n✓ Ticket ${updatedTicket.key} updated successfully!`);
-      console.log(`  Board Column: ${updatedTicket.boardColumn ?? updatedTicket.status} (Status: ${updatedTicket.status})`);
-      console.log(`  Direct Link:  ${updatedTicket.directUrl}`);
-      console.log(`  Board Link:   ${updatedTicket.boardViewUrl}`);
+      console.log('\n' + postRes.metadataText);
     } else {
       console.log(
         renderTicketOutput(updatedTicket, profile, format, {

@@ -1,8 +1,9 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { resolveTargetStatusesFromColumnOrStatus } from '../config/manager.ts';
+import { stagePreHookApprovalToken } from './agent-harness.ts';
 import type { DuplicateCandidate, TrackerProvider } from '../providers/base.ts';
 import type {
   CreateTicketInput,
@@ -22,6 +23,8 @@ export interface PreHookExecutionResult {
 export interface PostHookExecutionResult {
   executedHooks: string[];
   warnings: string[];
+  metadataSummaryLines: string[];
+  metadataText: string;
 }
 
 const FORBIDDEN_TERMS = [
@@ -102,7 +105,7 @@ export function renderPreHookPreviewBox(
   const dash = '-'.repeat(76);
   const lines: string[] = [
     hr,
-    `[PRE-HOOK PREVIEW] ${title}`,
+    `[PRE-HOOK PERMISSION PREVIEW] ${title}`,
     hr,
     `  ${'Provider'.padEnd(20)} ${profile.provider === 'jira' ? 'Jira' : 'Azure DevOps'} (Profile: ${profile.name})`,
     `  ${'Connected Board'.padEnd(20)} ${profile.board.name} (ID: ${profile.board.id})`,
@@ -139,26 +142,64 @@ export function renderPreHookPreviewBox(
   return lines.join('\n');
 }
 
+function consumeValidApprovalToken(workspaceDir: string = process.cwd()): boolean {
+  const tokenPath = join(workspaceDir, '.tkt', 'pending-approval.json');
+  if (!existsSync(tokenPath)) {
+    return false;
+  }
+  try {
+    const raw = JSON.parse(readFileSync(tokenPath, 'utf-8'));
+    rmSync(tokenPath, { force: true });
+    return Boolean(raw && raw.stagedAt);
+  } catch {
+    return false;
+  }
+}
+
 async function confirmOrAbortInteractive(
   actionLabel: string,
-  options: { dryRun?: boolean; yes?: boolean; requireConfirmation: boolean; format: OutputFormat }
+  options: {
+    dryRun?: boolean;
+    yes?: boolean;
+    requireConfirmation: boolean;
+    format: OutputFormat;
+    workspaceDir?: string;
+  }
 ): Promise<void> {
+  const workspaceDir = options.workspaceDir ?? process.cwd();
+
   if (options.dryRun) {
+    // Stage approval token so the user's subsequent approval (--yes) is authorized
+    stagePreHookApprovalToken(workspaceDir, 'cli-preview', actionLabel);
     if (options.format !== 'json' && options.format !== 'agent') {
-      console.log(`Dry-run mode: ${actionLabel} pre-hook preview complete. No changes made.`);
+      console.log(
+        `[PRE-HOOK PERMISSION GATE] Preview staged. Ask the user for permission to proceed with ${actionLabel}, then re-run with --yes (-y).`
+      );
     }
     process.exit(0);
   }
 
-  if (options.yes || !options.requireConfirmation) {
+  if (!options.requireConfirmation || process.env.TKT_FORCE_YES === '1') {
     return;
+  }
+
+  if (options.yes) {
+    // Verify that either PreToolUse hook or a prior Pre-Hook Preview staged permission
+    if (consumeValidApprovalToken(workspaceDir)) {
+      return;
+    }
+    // No prior preview or PreToolUse approval was recorded! Stage it now and require user permission first.
+    stagePreHookApprovalToken(workspaceDir, 'cli-preview', actionLabel);
+    throw new Error(
+      `[PRE-HOOK PERMISSION REQUIRED] Before executing ${actionLabel}, you must show the Pre-Hook Preview above to the user and ask for their permission. Once the user grants permission, run the command again with --yes (-y).`
+    );
   }
 
   if (process.stdin.isTTY) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
       const answer = (
-        await rl.question(`\n[Pre-Hook Confirmation] Proceed with ${actionLabel}? [y/N]: `)
+        await rl.question(`\n[Pre-Hook Permission] Allow ${actionLabel}? [y/N]: `)
       )
         .trim()
         .toLowerCase();
@@ -170,8 +211,9 @@ async function confirmOrAbortInteractive(
       rl.close();
     }
   } else {
+    stagePreHookApprovalToken(workspaceDir, 'cli-preview', actionLabel);
     throw new Error(
-      `Pre-Hook Confirmation Gate: ${actionLabel} requires explicit confirmation. Review the preview above and re-run with --yes (-y) after human approval.`
+      `[PRE-HOOK PERMISSION REQUIRED] ${actionLabel} requires explicit user permission. Show the Pre-Hook Preview above to the user, ask for their permission, and re-run with --yes (-y) once approved.`
     );
   }
 }
@@ -280,7 +322,7 @@ export async function runCreatePreHooks(
   passedHooks.push(...customRes.executed);
   warnings.push(...customRes.warnings);
 
-  // 5. Render Pre-Hook Preview & Enforce Confirmation
+  // 5. Render Pre-Hook Preview & Enforce Permission Gate
   const previewText = renderPreHookPreviewBox(
     'Proposed Ticket Creation',
     profile,
@@ -310,12 +352,14 @@ export async function runCreatePreHooks(
   );
 
   if (format === 'json' && input.dryRun) {
+    stagePreHookApprovalToken(process.cwd(), 'cli-preview', `create:${input.summary}`);
     console.log(
       JSON.stringify(
         {
           ok: true,
           dryRun: true,
           action: 'create.preview',
+          permissionRequired: true,
           profile: profile.name,
           provider: profile.provider,
           board: profile.board.name,
@@ -338,7 +382,6 @@ export async function runCreatePreHooks(
   if (format !== 'json' && format !== 'agent') {
     console.log(previewText);
   } else if (!input.yes && !input.dryRun) {
-    // Print preview to stderr when JSON output is requested without --yes
     console.error(previewText);
   }
 
@@ -411,12 +454,14 @@ export async function runUpdatePreHooks(
   );
 
   if (format === 'json' && input.dryRun) {
+    stagePreHookApprovalToken(process.cwd(), 'cli-preview', `update:${input.key}`);
     console.log(
       JSON.stringify(
         {
           ok: true,
           dryRun: true,
           action: 'update.preview',
+          permissionRequired: true,
           profile: profile.name,
           provider: profile.provider,
           board: profile.board.name,
@@ -449,26 +494,94 @@ export async function runUpdatePreHooks(
 }
 
 /**
+ * Summarizes the specific changes applied during a create or update operation.
+ */
+export function describeChangesApplied(
+  action: 'create' | 'update',
+  ticket: UnifiedTicket,
+  mutationInput?: Partial<CreateTicketInput & UpdateTicketInput>
+): string[] {
+  if (action === 'create') {
+    const items = [
+      `Created ${ticket.issueType} ${ticket.key}`,
+      `Placed in column '${ticket.boardColumn ?? ticket.status}' (Status: ${ticket.status})`,
+    ];
+    if (ticket.labels.length > 0) {
+      items.push(`Applied labels: ${ticket.labels.join(', ')}`);
+    }
+    if (ticket.parentKey) {
+      items.push(`Linked to parent: ${ticket.parentKey}`);
+    }
+    return items;
+  }
+
+  const changes: string[] = [];
+  if (mutationInput?.summary) {
+    changes.push(`Summary updated -> "${ticket.summary}"`);
+  }
+  if (mutationInput?.description) {
+    changes.push('Description updated');
+  }
+  if (mutationInput?.acceptanceCriteria) {
+    changes.push('Acceptance Criteria updated');
+  }
+  if (mutationInput?.reproSteps) {
+    changes.push('Repro Steps updated');
+  }
+  if (mutationInput?.columnOrStatus) {
+    changes.push(
+      `Moved to Board Column '${ticket.boardColumn ?? ticket.status}' (Status: ${ticket.status})`
+    );
+  }
+  if (mutationInput?.priority) {
+    changes.push(`Priority -> ${ticket.priority ?? mutationInput.priority}`);
+  }
+  if (mutationInput?.assignee) {
+    changes.push(`Assignee -> ${ticket.assignee ?? mutationInput.assignee}`);
+  }
+  if (mutationInput?.labels) {
+    changes.push(`Labels -> ${ticket.labels.join(', ')}`);
+  }
+  if (mutationInput?.parentKey) {
+    changes.push(`Parent -> ${mutationInput.parentKey}`);
+  }
+  if (mutationInput?.comment) {
+    changes.push('Added comment');
+  }
+  if (mutationInput?.customFields && Object.keys(mutationInput.customFields).length > 0) {
+    changes.push(`Custom fields (${Object.keys(mutationInput.customFields).join(', ')})`);
+  }
+  if (changes.length === 0) {
+    changes.push(`Synced ticket ${ticket.key}`);
+  }
+  return changes;
+}
+
+/**
  * Runs Post-Hooks after a ticket is created or updated:
- * 1. Verifies & formats Direct Ticket Link + Connected Board View Link
- * 2. Appends structured audit entry to `.tkt/audit.jsonl`
- * 3. Executes any custom post-hook scripts/webhooks
+ * 1. Builds brief Post-Hook Metadata Summary of what was done
+ * 2. Verifies & formats Direct Ticket Link + Connected Board View Link
+ * 3. Appends structured audit entry to `.tkt/audit.jsonl`
+ * 4. Executes any custom post-hook scripts/webhooks
  */
 export function runPostHooks(
   profile: TktProfile,
   action: 'create' | 'update',
   ticket: UnifiedTicket,
-  workspaceDir: string = process.cwd()
+  workspaceDir: string = process.cwd(),
+  mutationInput?: Partial<CreateTicketInput & UpdateTicketInput>
 ): PostHookExecutionResult {
-  const executedHooks: string[] = ['board-links-verifier'];
+  const executedHooks: string[] = ['board-links-verifier', 'post-metadata-summarizer'];
   const warnings: string[] = [];
+  const timestamp = new Date().toISOString();
+  const changesSummary = describeChangesApplied(action, ticket, mutationInput);
 
   if (profile.governance.auditLog) {
     try {
       const auditPath = join(workspaceDir, '.tkt', 'audit.jsonl');
       mkdirSync(dirname(auditPath), { recursive: true });
       const entry = {
-        timestamp: new Date().toISOString(),
+        timestamp,
         action,
         profile: profile.name,
         provider: profile.provider,
@@ -480,6 +593,7 @@ export function runPostHooks(
         status: ticket.status,
         boardColumn: ticket.boardColumn,
         summary: ticket.summary,
+        changes: changesSummary,
         directUrl: ticket.directUrl,
         boardViewUrl: ticket.boardViewUrl,
       };
@@ -499,6 +613,7 @@ export function runPostHooks(
       provider: profile.provider,
       board: profile.board,
       ticket,
+      changes: changesSummary,
     },
     {
       TKT_ACTION: action,
@@ -512,5 +627,26 @@ export function runPostHooks(
   executedHooks.push(...customRes.executed);
   warnings.push(...customRes.warnings);
 
-  return { executedHooks, warnings };
+  const dash = '-'.repeat(76);
+  const metadataSummaryLines = [
+    dash,
+    `[POST-HOOK METADATA] Ticket ${action === 'create' ? 'Created' : 'Updated'}`,
+    dash,
+    `  Action:         ${action.toUpperCase()} (${profile.provider.toUpperCase()} / ${ticket.project})`,
+    `  Ticket:         ${ticket.key} — ${ticket.summary}`,
+    `  What Was Done:  ${changesSummary.join(' | ')}`,
+    `  Board & Column: ${profile.board.name} (#${profile.board.id}) -> ${ticket.boardColumn ?? ticket.status} [Status: ${ticket.status}]`,
+    `  Metadata:       Type: ${ticket.issueType} | Priority: ${ticket.priority ?? 'Default'} | Assignee: ${ticket.assignee ?? 'Unassigned'}${ticket.labels.length ? ` | Labels: ${ticket.labels.join(', ')}` : ''}`,
+    `  Post-Hooks:     ${executedHooks.join(', ')} (${timestamp})`,
+    `  Direct Link:    ${ticket.directUrl}`,
+    `  Board Link:     ${ticket.boardViewUrl}`,
+    dash,
+  ];
+
+  return {
+    executedHooks,
+    warnings,
+    metadataSummaryLines,
+    metadataText: metadataSummaryLines.join('\n'),
+  };
 }
